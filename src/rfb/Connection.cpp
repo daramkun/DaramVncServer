@@ -323,20 +323,34 @@ void Connection::noteFenceResponse(uint32_t id) {
     const auto now = std::chrono::steady_clock::now();
     const FenceInfo f = it->second;
     fences_.erase(it);
+    const double rtt = std::chrono::duration<double, std::milli>(now - f.sent).count();
+
+    if (f.probe) {  // clean round trip: the client answers it before it reads any of the data queued behind it
+        probeRtts_[probeCount_ % 8] = rtt;
+        ++probeCount_;
+        double smallest = 1e9;
+        for (int i = 0; i < std::min(probeCount_, 8); ++i) smallest = std::min(smallest, probeRtts_[i]);
+        baseRttMs_ = smallest;
+        cv_.notify_all();
+        return;
+    }
 
     // A fence only answers after every earlier byte was consumed, so response timing reveals the link:
     //  - pipelined (sent while an earlier update was still unanswered): the gap between consecutive answers is
     //    the pure transfer time of this update;
-    //  - sent into an idle pipe: transfer time = round trip minus the base latency;
-    //  - small updates sent into an idle pipe measure the base latency itself.
+    //  - sent into an idle pipe: transfer time = round trip minus the base latency.
+    const bool baseKnown = baseRttMs_ < 1e8;
     const bool pipelined = lastFenceResponse_ != std::chrono::steady_clock::time_point{} && f.sent < lastFenceResponse_;
-    const double rtt = std::chrono::duration<double, std::milli>(now - f.sent).count();
-    if (f.bytes <= 4096) {
-        if (!pipelined) minRttMs_ = std::min(minRttMs_, rtt);
-    } else {
+    if (baseKnown) {
+        // Delivery delay beyond the network's own latency (queueing + transfer): what a lower JPEG quality can shrink.
+        const double excess = std::max(0.0, rtt - baseRttMs_);
+        latencyExcessMs_ = latencyExcessMs_ < 0 ? excess : latencyExcessMs_ * 0.7 + excess * 0.3;
+        latencyStamp_ = now;
+    }
+    if (f.bytes > 4096) {
         double transferMs;
         if (pipelined) transferMs = std::chrono::duration<double, std::milli>(now - lastFenceResponse_).count();
-        else transferMs = rtt - (minRttMs_ < 1e8 ? minRttMs_ : 0);
+        else transferMs = rtt - (baseKnown ? baseRttMs_ : 0.0);
         const double bw = static_cast<double>(f.bytes) / (std::max(transferMs, 1.0) / 1000.0);
         bandwidth_ = bandwidth_ == 0 ? bw : bandwidth_ * 0.6 + bw * 0.4;
     }

@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <array>
+#include <deque>
 #include <map>
 #include <string>
 
@@ -34,9 +35,14 @@ struct Io {
     SSL* ssl = nullptr;
     size_t rx = 0, tx = 0;
     double throttleBps = 0;  // simulate a slow link by pacing reads against a virtual clock
+    double throttleUntilSec = 0;  // >0: the slow link recovers after this many seconds
+    std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
     std::chrono::steady_clock::time_point virtualClock = std::chrono::steady_clock::now();
     void readExact(void* buf, size_t n) {
         readRaw(buf, n);
+        if (throttleBps > 0 && throttleUntilSec > 0 &&
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - startTime).count() > throttleUntilSec)
+            throttleBps = 0;
         if (throttleBps > 0) {
             const auto now = std::chrono::steady_clock::now();
             if (virtualClock < now) virtualClock = now;
@@ -86,7 +92,7 @@ void put32(std::vector<uint8_t>& v, uint32_t x) { for (int i = 3; i >= 0; --i) v
 int main(int argc, char** argv) {
     std::string host = "127.0.0.1", user, pass, vncPass, enc = "tight", pfName = "native";
     int port = 5900, seconds = 5, quality = 8;
-    double throttleKBps = 0;
+    double throttleKBps = 0, throttleUntil = 0, ackDelayMs = 0;
     bool continuous = false, verify = false, wantCursor = true, qemuKey = false, wantH264 = false;
     int rx = 0, ry = 0, rw = -1, rh = -1, resizeW = 0, resizeH = 0;
     int positional = 0;
@@ -100,6 +106,8 @@ int main(int argc, char** argv) {
         else if (a == "--seconds" && i + 1 < argc) seconds = std::atoi(argv[++i]);
         else if (a == "--quality" && i + 1 < argc) quality = std::atoi(argv[++i]);
         else if (a == "--throttle" && i + 1 < argc) throttleKBps = std::atof(argv[++i]);
+        else if (a == "--throttle-until" && i + 1 < argc) throttleUntil = std::atof(argv[++i]);
+        else if (a == "--ack-delay" && i + 1 < argc) ackDelayMs = std::atof(argv[++i]);
         else if (a == "--continuous") continuous = true;
         else if (a == "--verify") verify = true;
         else if (a == "--h264") wantH264 = true;
@@ -119,6 +127,7 @@ int main(int argc, char** argv) {
         WSAStartup(MAKEWORD(2, 2), &wsa);
         Io io;
         io.throttleBps = throttleKBps * 1024;
+        io.throttleUntilSec = throttleUntil;
         io.s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         sockaddr_in sa{};
         sa.sin_family = AF_INET;
@@ -219,6 +228,7 @@ int main(int argc, char** argv) {
         std::map<int, int> rectsByEnc;
         size_t updates = 0, firstUpdateBytes = 0;
         double worstMs = 0, sumMs = 0;
+        std::deque<std::pair<steady_clock::time_point, std::vector<uint8_t>>> delayedAcks;
         std::map<std::array<int, 4>, std::unique_ptr<ref::H264Decoder>> h264Ctx;
         int h264Frames = 0, h264Shown = 0;
         bool sawQemuAnnounce = false, qemuKeysSent = false, sawResize = false, resizeSent = false, sawContinuousAck = false, sawFence = false, sawCursor = false, sawExtSize = false, continuousOn = false;
@@ -229,7 +239,12 @@ int main(int argc, char** argv) {
         lastReq = steady_clock::now();
         waiting = true;
         while (duration<double>(steady_clock::now() - t0).count() < seconds || (verify && duration<double>(steady_clock::now() - lastUpdate).count() < 0.9)) {
-            if (!io.readable(100)) {
+            // Simulated network round trip: fence answers leave the client ackDelayMs after they were due.
+            while (!delayedAcks.empty() && delayedAcks.front().first <= steady_clock::now()) {
+                io.writeAll(delayedAcks.front().second.data(), delayedAcks.front().second.size());
+                delayedAcks.pop_front();
+            }
+            if (!io.readable(delayedAcks.empty() ? 100 : 2)) {
                 if (!continuousOn && !waiting) { request(true); lastReq = steady_clock::now(); waiting = true; }
                 continue;
             }
@@ -363,7 +378,8 @@ int main(int argc, char** argv) {
                     put32(r, flags & 0x7fffffffu);
                     r.push_back(len);
                     r.insert(r.end(), payload.begin(), payload.end());
-                    io.writeAll(r.data(), r.size());
+                    if (ackDelayMs > 0) delayedAcks.emplace_back(steady_clock::now() + milliseconds(static_cast<int>(ackDelayMs)), std::move(r));
+                    else io.writeAll(r.data(), r.size());
                 }
             } else if (type == 150) {  // EndOfContinuousUpdates
                 sawContinuousAck = true;

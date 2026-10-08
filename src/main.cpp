@@ -16,7 +16,7 @@ namespace {
 const char* kUsage =
     "DaramVncServer - high-performance VNC (RFB) server for Windows\n"
     "\n"
-    "usage: daramvnc [run] [--port N] [--bind ADDR] [--config FILE] [--view-only] [--h264]   run in the foreground\n"
+    "usage: daramvnc [run] [--port N] [--bind ADDR] [--config FILE] [--view-only] [--h264] [--jpeg-max Q] [--jpeg-min Q]   run in the foreground\n"
     "       daramvnc passwd <user>        set the login (VeNCrypt X509Plain over TLS) user and password\n"
     "       daramvnc vncpasswd            set an optional VNC password (X509Vnc over TLS; legacy VNC auth if enabled)\n"
     "       daramvnc install [--open-firewall]   install and start the Windows service (Administrator)\n"
@@ -90,6 +90,7 @@ int main(int argc, char** argv) {
     ServerConfig cfg;
     std::string portArg, bindArg;
     bool openFirewall = false, viewOnlyArg = false, h264Arg = false;
+    int jpegMaxArg = 0, jpegMinArg = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--config" && i + 1 < argc) configPath = argv[++i];
@@ -98,6 +99,8 @@ int main(int argc, char** argv) {
         else if (a == "--open-firewall") openFirewall = true;
         else if (a == "--view-only") viewOnlyArg = true;
         else if (a == "--h264") h264Arg = true;
+        else if (a == "--jpeg-max" && i + 1 < argc) jpegMaxArg = std::atoi(argv[++i]);
+        else if (a == "--jpeg-min" && i + 1 < argc) jpegMinArg = std::atoi(argv[++i]);
     }
     loadConfig(configPath, cfg);
     if (cfg.certFile.empty()) cfg.certFile = exeDirectory() + "\\server.crt";
@@ -106,6 +109,9 @@ int main(int argc, char** argv) {
     if (!bindArg.empty()) cfg.bind = bindArg;
     if (viewOnlyArg) cfg.viewOnly = true;
     if (h264Arg) cfg.h264 = true;
+    if (jpegMaxArg > 0) cfg.jpegQualityMax = jpegMaxArg;
+    if (jpegMinArg > 0) cfg.jpegQualityMin = jpegMinArg;
+    normalizeConfig(cfg);
 
     if (cmd == "passwd") {
         if (argc < 3 || argv[2][0] == '-') { std::fputs(kUsage, stderr); return 2; }

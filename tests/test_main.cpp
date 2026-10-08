@@ -9,6 +9,8 @@
 #include "encode/ZrleEncoder.h"
 #include "RefH264Decoder.h"
 #include "encode/H264Encoder.h"
+#include "config/Config.h"
+#include "encode/QualityController.h"
 #include "security/Auth.h"
 
 using namespace rfbenc;
@@ -282,6 +284,73 @@ void testH264() {
     CHECK(worst > 30.0);
 }
 
+void testQualityController() {
+    std::puts("quality controller: down fast on delay, up slowly when delay is gone, always inside [lo, hi]");
+    QualityController c;
+    double t = 1000;
+    CHECK(c.update(t, 5, 40, 85) == 85);  // starts at the upper limit
+
+    // Sustained delay: -10 every 200 ms until the lower limit, then it holds there.
+    int q = 85;
+    for (int i = 0; i < 20; ++i) { t += 200; q = c.update(t, 150, 40, 85); }
+    CHECK(q == 40);
+    t += 200;
+    CHECK(c.update(t, 150, 40, 85) == 40);
+
+    // Steps are rate limited: a call 50 ms after a step must not move the quality again.
+    QualityController r;
+    t = 5000;
+    r.update(t, 150, 40, 85);
+    t += 200; const int afterFirst = r.update(t, 150, 40, 85);
+    CHECK(afterFirst == 75);
+    t += 50; CHECK(r.update(t, 150, 40, 85) == 75);
+
+    // In between the thresholds the quality neither rises nor falls.
+    for (int i = 0; i < 10; ++i) { t += 200; CHECK(r.update(t, 50, 40, 85) == 75); }
+
+    // Good delay: nothing happens for the first 600 ms, then +3 per step, never above the upper limit.
+    t += 200; r.update(t, 5, 40, 85);
+    t += 200; CHECK(r.update(t, 5, 40, 85) == 75);
+    t += 200; CHECK(r.update(t, 5, 40, 85) == 75);
+    t += 200; CHECK(r.update(t, 5, 40, 85) == 78);
+    for (int i = 0; i < 30; ++i) { t += 200; q = r.update(t, 5, 40, 85); }
+    CHECK(q == 85);
+
+    // A single bad sample in the middle of recovery restarts the "good for 600 ms" wait.
+    QualityController g;
+    t = 9000;
+    g.update(t, 150, 40, 85);
+    for (int i = 0; i < 4; ++i) { t += 200; g.update(t, 150, 40, 85); }  // 85 -> 45
+    CHECK(g.current() == 45);
+    t += 200; g.update(t, 5, 40, 85);
+    t += 200; g.update(t, 50, 40, 85);  // delay between the limits: resets the good streak
+    t += 200; CHECK(g.update(t, 5, 40, 85) == 45);
+
+    // No measurement: hold.
+    QualityController h;
+    t = 20000;
+    h.update(t, 150, 40, 85);
+    t += 200; h.update(t, 150, 40, 85);
+    const int held = h.current();
+    for (int i = 0; i < 10; ++i) { t += 200; CHECK(h.update(t, -1, 40, 85) == held); }
+
+    // Limits change (client picks a lower quality): applied immediately.
+    CHECK(h.update(t + 200, -1, 40, 60) == 60 || h.current() <= 60);
+    CHECK(h.update(t + 400, -1, 55, 55) == 55);
+}
+
+void testConfigNormalize() {
+    std::puts("config: jpeg quality limits are normalised");
+    ServerConfig c;
+    CHECK(c.jpegQualityMax == 85 && c.jpegQualityMin == 40);  // documented defaults
+    c.jpegQualityMax = 500; c.jpegQualityMin = -3;
+    normalizeConfig(c);
+    CHECK(c.jpegQualityMax == 99 && c.jpegQualityMin == 1);
+    c.jpegQualityMax = 30; c.jpegQualityMin = 70;
+    normalizeConfig(c);
+    CHECK(c.jpegQualityMin == 30 && c.jpegQualityMax == 30);  // min can never exceed max
+}
+
 void testPixelFormatValidation() {
     std::printf("pixel format validation\n");
     PixelFormat ok;
@@ -333,6 +402,8 @@ int main() {
     testZrleFormatSwitch();
     testColourMapped();
     testH264();
+    testQualityController();
+    testConfigNormalize();
     testPixelFormatValidation();
     testAuth();
 

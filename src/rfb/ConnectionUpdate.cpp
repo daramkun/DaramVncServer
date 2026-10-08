@@ -13,7 +13,8 @@ using rfbenc::put32;
 
 namespace {
 
-constexpr int kMaxOutstandingFences = 2;
+constexpr int kMaxOutstandingFences = 16;  // the byte budget below is the real limit; this only bounds bookkeeping
+constexpr auto kProbeInterval = seconds(4);
 constexpr auto kRefineDelay = milliseconds(300);
 constexpr size_t kMaxLossyRects = 12;
 
@@ -25,16 +26,6 @@ Rect unionRect(const Rect& a, const Rect& b) {
 Rect clipTo(const Rect& r, int w, int h) {
     const int x1 = std::max(r.x, 0), y1 = std::max(r.y, 0), x2 = std::min(r.x + r.w, w), y2 = std::min(r.y + r.h, h);
     return x2 > x1 && y2 > y1 ? Rect{x1, y1, x2 - x1, y2 - y1} : Rect{};
-}
-
-// Highest JPEG quality worth using at an estimated throughput (bytes/s); 0 = unknown -> no cap.
-int jpegCapForBandwidth(double bw) {
-    if (bw <= 0) return 100;
-    if (bw < 300e3) return 25;
-    if (bw < 1e6) return 40;
-    if (bw < 3e6) return 60;
-    if (bw < 8e6) return 80;
-    return 100;
 }
 
 int zlibForBandwidth(double bw) {
@@ -96,6 +87,27 @@ bool Connection::sendColourMap() {
     return send(m);
 }
 
+// Sends a lone fence into an empty pipe so its answer measures only the network's round trip (the client
+// replies to it before reading any update data that follows). Refreshed every few seconds.
+bool Connection::maybeSendProbe() {
+    uint32_t id;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        const auto now = steady_clock::now();
+        const bool due = baseRttMs_ >= 1e8 || now - lastProbe_ > kProbeInterval;
+        if (!due || !fences_.empty()) return true;
+        id = fenceNext_++;
+        if (id == 0) id = fenceNext_++;
+        fences_[id] = {now, 0, true};
+        lastProbe_ = now;
+    }
+    std::vector<uint8_t> m{rfb::kMsgFence, 0, 0, 0};
+    put32(m, 0x80000001u);  // request | BlockBefore
+    m.push_back(4);
+    put32(m, id);
+    return send(m);
+}
+
 void Connection::appendFence(std::vector<uint8_t>& msg, size_t bytes) {
     uint32_t id;
     {
@@ -126,15 +138,34 @@ rfbenc::RectEncoder* Connection::pickEncoder(const Caps& caps, const PixelFormat
 }
 
 void Connection::adaptQuality(const Caps& caps) {
-    double bw;
+    double bw, excess;
     {
         std::lock_guard<std::mutex> lk(mu_);
         bw = bandwidth_;
+        // A delay measurement older than two seconds says nothing about the present link.
+        excess = (latencyExcessMs_ >= 0 && steady_clock::now() - latencyStamp_ < seconds(2)) ? latencyExcessMs_ : -1.0;
     }
-    const int clientQ = caps.quality >= 0 ? rfbenc::jpegQualityForLevel(caps.quality) : -1;
     adaptZlib_ = zlibForBandwidth(bw);
-    if (clientQ < 0 || clientQ >= 100) adaptJpeg_ = clientQ;
-    else adaptJpeg_ = std::min(clientQ, jpegCapForBandwidth(bw));
+    lastExcessMs_ = excess;
+
+    const int clientQ = caps.quality >= 0 ? rfbenc::jpegQualityForLevel(caps.quality) : -1;
+    if (clientQ < 0 || clientQ >= 100) {
+        adaptJpeg_ = clientQ;  // the client asked for no JPEG at all (or lossless only)
+    } else {
+        // Configured range, narrowed by what the client asked for: never above the client's quality.
+        const int hi = std::min(clientQ, cfg_.jpegQualityMax);
+        const int lo = std::min(cfg_.jpegQualityMin, hi);
+        const double nowMs = duration<double, std::milli>(steady_clock::now().time_since_epoch()).count();
+        adaptJpeg_ = quality_.update(nowMs, excess, lo, hi);
+        const auto now = steady_clock::now();
+        if (adaptJpeg_ != lastLoggedQuality_ && now - lastQualityLog_ > seconds(1)) {
+            if (lastLoggedQuality_ >= 0)
+                LOGI("%s: JPEG quality %d -> %d (delivery delay over base: %.0f ms, range %d..%d)", peer_.c_str(), lastLoggedQuality_,
+                     adaptJpeg_, excess, lo, hi);
+            lastLoggedQuality_ = adaptJpeg_;
+            lastQualityLog_ = now;
+        }
+    }
     if (tight_) {
         tight_->setJpegQuality(adaptJpeg_);
         tight_->setZlibLevel(adaptZlib_);
@@ -170,11 +201,11 @@ void Connection::recordStats(std::chrono::steady_clock::duration encode, std::ch
             {
                 std::lock_guard<std::mutex> lk(mu_);
                 bw = bandwidth_;
-                rtt = minRttMs_;
+                rtt = baseRttMs_;
             }
-            LOGI("%s: %.1f updates/s, %.0f KB/update, encode %.2f ms, send %.2f ms per update, link ~%.1f MB/s (base latency %.1f ms), jpeg<=%d zlib %d",
+            LOGI("%s: %.1f updates/s, %.0f KB/update, encode %.2f ms, send %.2f ms per update, link ~%.1f MB/s (base latency %.1f ms), delay over base %.0f ms, jpeg<=%d zlib %d",
                  peer_.c_str(), stats_.updates / secs, stats_.bytes / 1024.0 / stats_.updates, stats_.encodeMs / stats_.updates,
-                 stats_.sendMs / stats_.updates, bw / 1048576.0, rtt < 1e8 ? rtt : 0.0, adaptJpeg_, adaptZlib_);
+                 stats_.sendMs / stats_.updates, bw / 1048576.0, rtt < 1e8 ? rtt : 0.0, lastExcessMs_, adaptJpeg_, adaptZlib_);
         }
         stats_ = Stats{};
         stats_.since = steady_clock::now();
@@ -281,6 +312,7 @@ Connection::UpdateResult Connection::sendUpdate(bool nonIncremental, const Caps&
     if (count == 0) return UpdateResult::Idle;
     msg[2] = static_cast<uint8_t>(count >> 8);
     msg[3] = static_cast<uint8_t>(count & 0xFF);
+    if (caps.fence && !maybeSendProbe()) return UpdateResult::Error;
     if (caps.fence) appendFence(msg, msg.size());
     const size_t wireBytes = msg.size();
     if (!send(msg)) return UpdateResult::Error;
@@ -322,6 +354,7 @@ bool Connection::sendRefine(const Caps& caps, const PixelFormat& pf) {
     if (count == 0) return true;
     msg[2] = static_cast<uint8_t>(count >> 8);
     msg[3] = static_cast<uint8_t>(count & 0xFF);
+    if (caps.fence && !maybeSendProbe()) return false;
     if (caps.fence) appendFence(msg, msg.size());
     if (!send(msg)) return false;
     std::lock_guard<std::mutex> lk(mu_);
@@ -344,12 +377,16 @@ void Connection::updaterMain() {
                 for (auto it = fences_.begin(); it != fences_.end();)
                     it = (now - it->second.sent > seconds(2)) ? fences_.erase(it) : std::next(it);
                 const bool want = requestPending_ || continuous_;
-                // Keep the amount of unanswered data near what the link moves in ~80 ms so queues cannot add latency.
+                // Keep the unanswered data near what the link carries during one round trip plus ~80 ms of queue: enough to
+                // keep a long fat link full, little enough that a queue cannot add latency.
                 size_t inflight = 0;
                 for (const auto& f : fences_) inflight += f.second.bytes;
-                const size_t budget = bandwidth_ > 0 ? std::max<size_t>(96 * 1024, static_cast<size_t>(bandwidth_ * 0.08)) : SIZE_MAX;
-                const bool congested = caps_.fence && !fences_.empty() &&
-                                       (fences_.size() >= static_cast<size_t>(kMaxOutstandingFences) || inflight >= budget);
+                const double baseSec = baseRttMs_ < 1e8 ? baseRttMs_ / 1000.0 : 0.0;
+                const size_t budget = bandwidth_ > 0 ? std::max<size_t>(96 * 1024, static_cast<size_t>(bandwidth_ * (baseSec + 0.08))) : SIZE_MAX;
+                bool congested = caps_.fence && !fences_.empty() &&
+                                 (fences_.size() >= static_cast<size_t>(kMaxOutstandingFences) || inflight >= budget);
+                // A round-trip probe needs an empty pipe: hold back briefly when one is due.
+                if (caps_.fence && !fences_.empty() && (baseRttMs_ >= 1e8 || now - lastProbe_ > kProbeInterval)) congested = true;
                 if (stop_) return;
                 if (want && !congested) break;
                 cv_.wait_for(lk, milliseconds(250));
@@ -359,7 +396,6 @@ void Connection::updaterMain() {
             pfGen = pfGeneration_;
             nonIncremental = requestPending_ && !requestIncremental_;
         }
-
         const UpdateResult r = sendUpdate(nonIncremental, caps, pf, pfGen);
         if (r == UpdateResult::Error) {
             dead_ = true;

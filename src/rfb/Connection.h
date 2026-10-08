@@ -15,6 +15,7 @@
 #include "capture/ICapturer.h"
 #include "config/Config.h"
 #include "encode/H264Encoder.h"
+#include "encode/QualityController.h"
 #include "encode/RawEncoder.h"
 #include "encode/TightEncoder.h"
 #include "encode/ZrleEncoder.h"
@@ -51,6 +52,7 @@ private:
     struct FenceInfo {
         std::chrono::steady_clock::time_point sent;
         size_t bytes = 0;
+        bool probe = false;  // sent alone into an empty pipe: measures the network's own round trip
     };
     std::chrono::steady_clock::time_point lastFenceResponse_{};
 
@@ -78,6 +80,7 @@ private:
     void appendCursor(std::vector<uint8_t>& msg, int& count, const PixelFormat& pf);
     void appendFence(std::vector<uint8_t>& msg, size_t bytes);
     bool sendColourMap();
+    bool maybeSendProbe();
     // ConnectionVideo.cpp: H.264 for video-like regions
     void handleVideo(std::vector<Rect>& dirty, const rfbenc::FrameView& fb, const Caps& caps, std::vector<uint8_t>& msg, int& count);
     void maintainVideo();
@@ -123,6 +126,12 @@ private:
     uint32_t fenceNext_ = 1;
     std::map<uint32_t, FenceInfo> fences_;
     double minRttMs_ = 1e9, bandwidth_ = 0;  // bytes/s estimate, 0 = unknown
+    double baseRttMs_ = 1e9;                 // network round trip measured by probes (1e9 = not measured yet)
+    double probeRtts_[8] = {};               // the most recent probe round trips
+    int probeCount_ = 0;
+    std::chrono::steady_clock::time_point lastProbe_{};
+    double latencyExcessMs_ = -1;            // smoothed (round trip - base): queueing + transfer time of updates
+    std::chrono::steady_clock::time_point latencyStamp_{};
     bool announcedFence_ = false, announcedContinuous_ = false;
     bool qemuKeyAnnounced_ = false;
     bool announceQemuKey_ = false;  // pending empty pseudo-rectangle telling the client we accept extended key events
@@ -140,6 +149,10 @@ private:
     bool haveCursor_ = false;
     unsigned colormapGeneration_ = ~0u;
     int adaptJpeg_ = 100, adaptZlib_ = 3;
+    rfbenc::QualityController quality_;
+    std::chrono::steady_clock::time_point lastQualityLog_{};
+    int lastLoggedQuality_ = -1;
+    double lastExcessMs_ = -1;  // for the periodic stats line
     struct Video {
         bool active = false, first = true;
         Rect r;

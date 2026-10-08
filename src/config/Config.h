@@ -11,6 +11,10 @@ struct ServerConfig {
     // Legacy VNC Authentication needs a reversible secret: DPAPI (machine scope) protected, hex encoded.
     std::string vncPasswordProtected;
 
+    // JPEG quality range for photo-like regions. The server starts at the upper limit (or the client's own
+    // request if lower) and moves down when the client sees delay and back up when delay is gone.
+    int jpegQualityMax = 85, jpegQualityMin = 40;
+
     bool h264 = false;                // use H.264 (RFB encoding 50) for video-like regions when the client supports it
     bool viewOnly = false;            // ignore keyboard, mouse and clipboard input from clients
     bool allowLegacyVncAuth = false;  // offer RFB "VNC Authentication" (DES challenge) when a VNC password is set
@@ -24,6 +28,9 @@ struct ServerConfig {
 // Directory holding the executable (config, certificate and log live here by default).
 std::string exeDirectory();
 std::string defaultConfigPath();
+
+// Brings out-of-range or inconsistent settings into a usable state (quality 1..99, min <= max).
+void normalizeConfig(ServerConfig& cfg);
 
 // key=value text file; unknown keys ignored. Missing file leaves defaults untouched.
 bool loadConfig(const std::string& path, ServerConfig& cfg);

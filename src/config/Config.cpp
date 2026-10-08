@@ -22,6 +22,12 @@ bool parseBool(const std::string& v) { return v == "1" || v == "true" || v == "y
 
 }  // namespace
 
+void normalizeConfig(ServerConfig& cfg) {
+    cfg.jpegQualityMax = std::clamp(cfg.jpegQualityMax, 1, 99);
+    cfg.jpegQualityMin = std::clamp(cfg.jpegQualityMin, 1, 99);
+    if (cfg.jpegQualityMin > cfg.jpegQualityMax) cfg.jpegQualityMin = cfg.jpegQualityMax;
+}
+
 std::string exeDirectory() {
     char path[MAX_PATH * 2];
     DWORD n = GetModuleFileNameA(nullptr, path, sizeof path);
@@ -47,6 +53,8 @@ bool loadConfig(const std::string& path, ServerConfig& cfg) {
         else if (k == "user") cfg.user = v;
         else if (k == "password_hash") cfg.passwordHash = v;
         else if (k == "vnc_password_dpapi") cfg.vncPasswordProtected = v;
+        else if (k == "jpeg_quality_max") cfg.jpegQualityMax = std::atoi(v.c_str());
+        else if (k == "jpeg_quality_min") cfg.jpegQualityMin = std::atoi(v.c_str());
         else if (k == "h264") cfg.h264 = parseBool(v);
         else if (k == "view_only") cfg.viewOnly = parseBool(v);
         else if (k == "allow_legacy_vnc_auth") cfg.allowLegacyVncAuth = parseBool(v);
@@ -57,6 +65,7 @@ bool loadConfig(const std::string& path, ServerConfig& cfg) {
     const std::string dir = exeDirectory();
     if (cfg.certFile.empty()) cfg.certFile = dir + "\\server.crt";
     if (cfg.keyFile.empty()) cfg.keyFile = dir + "\\server.key";
+    normalizeConfig(cfg);
     return true;
 }
 

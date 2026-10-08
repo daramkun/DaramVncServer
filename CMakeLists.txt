@@ -45,3 +45,6 @@ target_link_libraries(animwin PRIVATE user32 gdi32)
 
 add_executable(bench_encode tools/bench_encode.cpp)
 target_link_libraries(bench_encode PRIVATE daramcore)
+
+add_executable(bench_jpeg tools/bench_jpeg.cpp)
+target_link_libraries(bench_jpeg PRIVATE daramcore)
