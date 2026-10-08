@@ -135,6 +135,7 @@ private:
     std::unique_ptr<rfbenc::ZrleEncoder> zrle_;
     std::unique_ptr<rfbenc::RawEncoder> raw_;
     std::vector<Rect> lossy_;
+    std::vector<uint8_t> msgBuf_;  // outgoing update message, reused
     CursorShape lastCursor_;
     bool haveCursor_ = false;
     unsigned colormapGeneration_ = ~0u;

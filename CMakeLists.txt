@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(ZLIB REQUIRED)
+find_package(zlib-ng CONFIG REQUIRED)
 find_package(libjpeg-turbo CONFIG REQUIRED)
 find_package(OpenSSL REQUIRED)
 
@@ -18,7 +19,7 @@ if(MSVC)
     target_compile_options(daramcore PUBLIC /W4 /permissive- /utf-8)
 endif()
 target_link_libraries(daramcore PUBLIC
-    ZLIB::ZLIB libjpeg-turbo::turbojpeg-static OpenSSL::SSL OpenSSL::Crypto
+    ZLIB::ZLIB zlib-ng::zlib libjpeg-turbo::turbojpeg-static OpenSSL::SSL OpenSSL::Crypto
     ws2_32 user32 gdi32 d3d11 dxgi bcrypt crypt32 advapi32 wtsapi32 userenv shell32
     mfplat mf mfuuid wmcodecdspuuid ole32 oleaut32 strmiids)
 
@@ -41,3 +42,6 @@ target_link_libraries(daramvnc_client PRIVATE daramcore winmm)
 
 add_executable(animwin tools/animwin.cpp)
 target_link_libraries(animwin PRIVATE user32 gdi32)
+
+add_executable(bench_encode tools/bench_encode.cpp)
+target_link_libraries(bench_encode PRIVATE daramcore)

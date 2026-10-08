@@ -1,5 +1,5 @@
 #pragma once
-#include <zlib.h>
+#include <memory>
 
 #include "encode/Encoder.h"
 
@@ -24,7 +24,8 @@ private:
 
     PixelFormat pf_;
     int cpixelBytes_, cpixelOffset_;
-    z_stream z_{};
+    struct Zng;  // zlib-ng deflate stream (hidden from this header)
+    std::unique_ptr<Zng> z_;
     std::vector<uint8_t> raw_, zbuf_;
 };
 

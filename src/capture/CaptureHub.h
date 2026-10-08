@@ -78,7 +78,7 @@ public:
 private:
     bool startLocked();
     void captureLoop();
-    void applyToFramebuffer(const FrameUpdate& u);
+    void applyToFramebuffer(FrameUpdate& u);
     void distribute(FrameUpdate& u);
     static void addDirty(std::vector<Rect>& list, const Rect& r);
 

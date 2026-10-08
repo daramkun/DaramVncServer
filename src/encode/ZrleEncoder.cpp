@@ -1,5 +1,7 @@
 #include "encode/ZrleEncoder.h"
 
+#include <zlib-ng.h>
+
 #include <algorithm>
 
 #include "encode/ColorSet.h"
@@ -25,8 +27,12 @@ void putRunLength(std::vector<uint8_t>& out, int len) {
 
 }  // namespace
 
-ZrleEncoder::ZrleEncoder(const PixelFormat& pf, int zlibLevel) {
-    deflateInit(&z_, zlibLevel);
+struct ZrleEncoder::Zng {
+    zng_stream z{};
+};
+
+ZrleEncoder::ZrleEncoder(const PixelFormat& pf, int zlibLevel) : z_(std::make_unique<Zng>()) {
+    zng_deflateInit(&z_->z, zlibLevel);
     setPixelFormat(pf);
 }
 
@@ -47,7 +53,7 @@ void ZrleEncoder::setPixelFormat(const PixelFormat& pf) {
     }
 }
 
-ZrleEncoder::~ZrleEncoder() { deflateEnd(&z_); }
+ZrleEncoder::~ZrleEncoder() { zng_deflateEnd(&z_->z); }
 
 void ZrleEncoder::appendCPixel(std::vector<uint8_t>& out, uint32_t v) const {
     uint8_t tmp[4];
@@ -143,13 +149,15 @@ int ZrleEncoder::encode(const FrameView& fb, const Rect& r, std::vector<uint8_t>
         for (int tx = r.x; tx < r.x + r.w; tx += kTile)
             encodeTile(fb, tx, ty, std::min(kTile, r.x + r.w - tx), std::min(kTile, r.y + r.h - ty), raw_);
 
-    zbuf_.resize(deflateBound(&z_, static_cast<uLong>(raw_.size())) + 64);
-    z_.next_in = raw_.data();
-    z_.avail_in = static_cast<uInt>(raw_.size());
-    z_.next_out = zbuf_.data();
-    z_.avail_out = static_cast<uInt>(zbuf_.size());
-    deflate(&z_, Z_SYNC_FLUSH);
-    const size_t produced = zbuf_.size() - z_.avail_out;
+    zng_stream& z = z_->z;
+    const size_t bound = zng_deflateBound(&z, raw_.size()) + 64;
+    if (zbuf_.size() < bound) zbuf_.resize(bound);
+    z.next_in = raw_.data();
+    z.avail_in = static_cast<uint32_t>(raw_.size());
+    z.next_out = zbuf_.data();
+    z.avail_out = static_cast<uint32_t>(zbuf_.size());
+    zng_deflate(&z, Z_SYNC_FLUSH);
+    const size_t produced = zbuf_.size() - z.avail_out;
 
     putRectHeader(out, r.x, r.y, r.w, r.h, kZrle);
     put32(out, static_cast<uint32_t>(produced));

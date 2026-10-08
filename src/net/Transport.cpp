@@ -10,8 +10,9 @@
 PlainTransport::PlainTransport(SOCKET s) : sock_(s) {
     BOOL nodelay = TRUE;
     setsockopt(sock_, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nodelay), sizeof nodelay);
-    int sndbuf = 256 * 1024;
-    setsockopt(sock_, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&sndbuf), sizeof sndbuf);
+    // No explicit SO_SNDBUF: fixing the size switches off Windows' send-buffer auto-tuning, which would cap the
+    // throughput of high-latency links at (buffer size / RTT). Queueing delay is bounded by the fence-based
+    // in-flight budget in the updater instead.
     DWORD sendTimeout = 30000;  // a client that stops reading must not pin our sender thread forever
     setsockopt(sock_, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&sendTimeout), sizeof sendTimeout);
 }

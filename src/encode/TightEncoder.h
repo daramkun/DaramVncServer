@@ -1,7 +1,6 @@
 #pragma once
-#include <zlib.h>
-
 #include <array>
+#include <memory>
 
 #include "encode/Encoder.h"
 
@@ -42,9 +41,8 @@ private:
     PixelFormat pf_;
     int jpegQuality_, zlibLevel_;
     bool lossless_ = false, lastLossy_ = false;
-    std::array<z_stream, 4> zs_{};
-    std::array<bool, 4> zInit_{};
-    std::array<int, 4> zLevel_{};
+    struct ZState;  // zlib-ng deflate streams, hidden so this header does not pull in zlib-ng
+    std::unique_ptr<ZState> z_;
     std::vector<uint8_t> zbuf_;
 };
 

@@ -201,7 +201,7 @@ Connection::UpdateResult Connection::sendUpdate(bool nonIncremental, const Caps&
     if (forceFull) hub_->markDamage(*sub_, Rect{0, 0, layout.w, layout.h});
     else if (nonIncremental) hub_->markDamage(*sub_, region);
 
-    if (!hub_->wait(*sub_, (forceFull || nonIncremental) ? 0 : 30, region)) return UpdateResult::Error;
+    if (!hub_->wait(*sub_, (forceFull || nonIncremental) ? 0 : 100, region)) return UpdateResult::Error;
     CaptureHub::Delta d;
     if (!hub_->take(*sub_, region, d) && !announceKey) return UpdateResult::Idle;
     layout = hub_->layout();
@@ -226,7 +226,9 @@ Connection::UpdateResult Connection::sendUpdate(bool nonIncremental, const Caps&
     }
     if (cursorDirty && !haveCursor_) haveCursor_ = captureCurrentCursor(lastCursor_);
 
-    std::vector<uint8_t> msg{rfb::kMsgFramebufferUpdate, 0, 0, 0};
+    std::vector<uint8_t>& msg = msgBuf_;  // reused across updates: no per-update allocation or page faults
+    msg.clear();
+    msg.insert(msg.end(), {rfb::kMsgFramebufferUpdate, 0, 0, 0});
     int count = 0;
     if (caps.cursor && haveCursor_ && cursorDirty) {
         appendCursor(msg, count, pf);
@@ -282,6 +284,7 @@ Connection::UpdateResult Connection::sendUpdate(bool nonIncremental, const Caps&
     const size_t wireBytes = msg.size();
     if (!send(msg)) return UpdateResult::Error;
     recordStats(encodeEnd - encodeStart, steady_clock::now() - encodeEnd, wireBytes);
+    if (msg.capacity() > (48u << 20)) std::vector<uint8_t>().swap(msg);  // don't pin a huge buffer after a one-off full frame
 
     // The request is answered either way; in continuous mode the client sends no more of them, and a stale
     // "pending non-incremental" flag would turn every later update into a full snapshot.
@@ -298,7 +301,9 @@ bool Connection::sendRefine(const Caps& caps, const PixelFormat& pf) {
     }
     std::vector<Rect> rects = std::move(lossy_);
     lossy_.clear();
-    std::vector<uint8_t> msg{rfb::kMsgFramebufferUpdate, 0, 0, 0};
+    std::vector<uint8_t>& msg = msgBuf_;
+    msg.clear();
+    msg.insert(msg.end(), {rfb::kMsgFramebufferUpdate, 0, 0, 0});
     int count = 0;
     {
         CaptureHub::View view = hub_->view();

@@ -1,14 +1,14 @@
 #include "encode/TightEncoder.h"
 
 #include <turbojpeg.h>
+#include <zlib-ng.h>
 
 #include <algorithm>
 #include <cassert>
-#include <future>
-#include <thread>
 
 #include "encode/ColorSet.h"
 #include "encode/TileClass.h"
+#include "util/WorkerPool.h"
 
 namespace rfbenc {
 
@@ -24,18 +24,21 @@ void putRgb(std::vector<uint8_t>& out, uint32_t rgb) {
     out.push_back(static_cast<uint8_t>(rgb));
 }
 
-int jpegSubsampling(int quality) { return quality >= 80 ? TJSAMP_444 : TJSAMP_420; }
+// 4:2:0 is the right trade for photographic content (chroma detail is invisible there) and is ~30% cheaper.
+int jpegSubsampling(int quality) { return quality >= 95 ? TJSAMP_444 : TJSAMP_420; }
 
 void compressJpeg(const FrameView& fb, int x, int y, int w, int h, int quality, std::vector<uint8_t>& out) {
     thread_local tjhandle handle = tjInitCompress();
+    thread_local std::vector<uint8_t> scratch;  // reused: avoids allocating and zero-filling a worst-case buffer per rect
     const int samp = jpegSubsampling(quality);
-    out.resize(tjBufSize(w, h, samp));
-    unsigned char* buf = out.data();
-    unsigned long size = out.size();
+    const size_t need = tjBufSize(w, h, samp);
+    if (scratch.size() < need) scratch.resize(need);
+    unsigned char* buf = scratch.data();
+    unsigned long size = static_cast<unsigned long>(scratch.size());
     if (tjCompress2(handle, fb.at(x, y), w, fb.width * 4, h, TJPF_BGRX, &buf, &size, samp, quality,
                     TJFLAG_FASTDCT | TJFLAG_NOREALLOC) != 0)
         size = 0;
-    out.resize(size);
+    out.assign(scratch.begin(), scratch.begin() + static_cast<std::ptrdiff_t>(size));
 }
 
 }  // namespace
@@ -58,14 +61,20 @@ int jpegQualityForLevel(int level) {
     return table[std::clamp(level, 0, 9)];
 }
 
+struct TightEncoder::ZState {
+    std::array<zng_stream, 4> zs{};
+    std::array<bool, 4> init{};
+    std::array<int, 4> level{};
+};
+
 TightEncoder::TightEncoder(const PixelFormat& pf, int jpegQuality, int zlibLevel)
-    : pf_(pf), jpegQuality_(jpegQuality), zlibLevel_(zlibLevel) {
+    : pf_(pf), jpegQuality_(jpegQuality), zlibLevel_(zlibLevel), z_(std::make_unique<ZState>()) {
     assert(pf.tightPixel24());
 }
 
 TightEncoder::~TightEncoder() {
-    for (size_t i = 0; i < zs_.size(); ++i)
-        if (zInit_[i]) deflateEnd(&zs_[i]);
+    for (size_t i = 0; i < z_->zs.size(); ++i)
+        if (z_->init[i]) zng_deflateEnd(&z_->zs[i]);
 }
 
 void TightEncoder::deflateRect(int stream, uint8_t ctrl, const std::vector<uint8_t>& prefix,
@@ -76,22 +85,23 @@ void TightEncoder::deflateRect(int stream, uint8_t ctrl, const std::vector<uint8
         out.insert(out.end(), data.begin(), data.end());
         return;
     }
-    z_stream& z = zs_[stream];
+    zng_stream& z = z_->zs[stream];
     const int strategy = stream == 0 ? Z_DEFAULT_STRATEGY : Z_FILTERED;
-    if (!zInit_[stream]) {
-        deflateInit2(&z, zlibLevel_, Z_DEFLATED, 15, 8, strategy);
-        zInit_[stream] = true;
-        zLevel_[stream] = zlibLevel_;
-    } else if (zLevel_[stream] != zlibLevel_) {
-        deflateParams(&z, zlibLevel_, strategy);
-        zLevel_[stream] = zlibLevel_;
+    if (!z_->init[stream]) {
+        zng_deflateInit2(&z, zlibLevel_, Z_DEFLATED, 15, 8, strategy);
+        z_->init[stream] = true;
+        z_->level[stream] = zlibLevel_;
+    } else if (z_->level[stream] != zlibLevel_) {
+        zng_deflateParams(&z, zlibLevel_, strategy);
+        z_->level[stream] = zlibLevel_;
     }
-    zbuf_.resize(deflateBound(&z, static_cast<uLong>(data.size())) + 64);
-    z.next_in = const_cast<Bytef*>(data.data());
-    z.avail_in = static_cast<uInt>(data.size());
+    const size_t bound = zng_deflateBound(&z, data.size()) + 64;
+    if (zbuf_.size() < bound) zbuf_.resize(bound);  // grows only: no repeated zero-filling
+    z.next_in = data.data();
+    z.avail_in = static_cast<uint32_t>(data.size());
     z.next_out = zbuf_.data();
-    z.avail_out = static_cast<uInt>(zbuf_.size());
-    deflate(&z, Z_SYNC_FLUSH);
+    z.avail_out = static_cast<uint32_t>(zbuf_.size());
+    zng_deflate(&z, Z_SYNC_FLUSH);
     const size_t produced = zbuf_.size() - z.avail_out;
     putCompactLength(out, produced);
     out.insert(out.end(), zbuf_.begin(), zbuf_.begin() + produced);
@@ -189,6 +199,30 @@ int TightEncoder::encode(const FrameView& fb, const Rect& rect, std::vector<uint
         }
     }
 
+    // Stack photo runs of consecutive bands into taller rectangles: fewer JPEG headers and calls, better
+    // compression, while still leaving enough pieces to keep the worker threads busy.
+    {
+        constexpr int kMaxPhotoHeight = 192;
+        std::vector<Run> merged;
+        merged.reserve(runs.size());
+        for (Run& r : runs) {
+            bool joined = false;
+            if (r.kind == Kind::Photo) {
+                for (size_t j = merged.size(); j-- > 0 && !joined;) {
+                    Run& up = merged[j];
+                    if (up.kind == Kind::Photo && up.x == r.x && up.w == r.w && up.y + up.h == r.y && up.h + r.h <= kMaxPhotoHeight) {
+                        up.h += r.h;
+                        joined = true;
+                    } else if (up.y + up.h < r.y) {
+                        break;  // everything earlier ends above the previous band
+                    }
+                }
+            }
+            if (!joined) merged.push_back(std::move(r));
+        }
+        runs = std::move(merged);
+    }
+
     // 2. JPEG-compress photo runs in parallel (zlib state is sequential, JPEG is stateless).
     std::vector<Run*> photo;
     for (Run& r : runs)
@@ -196,16 +230,9 @@ int TightEncoder::encode(const FrameView& fb, const Rect& rect, std::vector<uint
     if (!photo.empty()) {
         lastLossy_ = true;
         const int q = jpegQuality_;
-        const size_t workers = std::min<size_t>(photo.size(), std::max(1u, std::min(4u, std::thread::hardware_concurrency())));
-        std::vector<std::future<void>> jobs;
-        for (size_t t = 1; t < workers; ++t)
-            jobs.push_back(std::async(std::launch::async, [&, t] {
-                for (size_t i = t; i < photo.size(); i += workers)
-                    compressJpeg(fb, photo[i]->x, photo[i]->y, photo[i]->w, photo[i]->h, q, photo[i]->jpeg);
-            }));
-        for (size_t i = 0; i < photo.size(); i += workers)
+        WorkerPool::instance().parallelFor(photo.size(), [&](size_t i) {
             compressJpeg(fb, photo[i]->x, photo[i]->y, photo[i]->w, photo[i]->h, q, photo[i]->jpeg);
-        for (auto& j : jobs) j.get();
+        });
     }
 
     // 3. Emit in order.

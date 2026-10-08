@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "dependencies": [
     "zlib",
+    "zlib-ng",
     { "name": "libjpeg-turbo", "features": [] },
     "openssl"
   ]
