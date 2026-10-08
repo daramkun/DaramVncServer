@@ -366,7 +366,17 @@ int main(int argc, char** argv) {
                             uint32_t len = static_cast<uint32_t>(payload[0]) << 24 | payload[1] << 16 | payload[2] << 8 | payload[3];
                             grab(len);
                             ref::Reader r(payload);
-                            zrle.decodeRect(r, x, y, w, h, pf, fb);
+                            try {
+                                zrle.decodeRect(r, x, y, w, h, pf, fb);
+                            } catch (const std::exception& ex) {  // say which rectangle broke the decoder
+                                if (const char* dump = std::getenv("DARAMVNC_DUMP_ZRLE")) {  // keep the payload for offline analysis
+                                    FILE* df = nullptr;
+                                    fopen_s(&df, dump, "wb");
+                                    if (df) { std::fwrite(payload.data() + 4, 1, payload.size() - 4, df); std::fclose(df); }
+                                }
+                                throw std::runtime_error(std::string(ex.what()) + " while decoding ZRLE rect " + std::to_string(x) + "," + std::to_string(y) + " " +
+                                                         std::to_string(w) + "x" + std::to_string(h) + " (" + std::to_string(len) + " compressed bytes, " + std::to_string(pf.bpp) + " bpp)");
+                            }
                         } else {
                             grab(1);
                             const uint8_t c = payload[0];

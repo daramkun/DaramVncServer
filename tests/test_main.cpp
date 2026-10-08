@@ -13,6 +13,7 @@
 #include "encode/H264Encoder.h"
 #include "config/Config.h"
 #include "encode/QualityController.h"
+#include "capture/GdiCapturer.h"
 #include "security/Auth.h"
 #include "util/Log.h"
 
@@ -190,6 +191,25 @@ void testZrleFormatSwitch() {
     CHECK(psnr(src, dst) > 20.0);
 }
 
+void testZrlePaletteBoundary() {
+    std::printf("zrle: tiles with 127, 128 and 129 colours (128 + palette size must not wrap the sub-encoding byte)\n");
+    PixelFormat pf;
+    for (int colours : {127, 128, 129}) {
+        Image src(64, 64), dst(64, 64);
+        for (int i = 0; i < 64 * 64; ++i) {
+            const int k = i % colours;  // colours recur in short runs, which is what makes palette RLE the cheapest form
+            uint8_t* p = src.at(i % 64, i / 64);
+            p[0] = static_cast<uint8_t>(k * 2); p[1] = static_cast<uint8_t>(255 - k); p[2] = static_cast<uint8_t>(k * 7); p[3] = 255;
+        }
+        ZrleEncoder enc(pf, 3);
+        ref::ZrleDecoder dec;
+        std::vector<uint8_t> wire;
+        int n = enc.encode(view(src), {0, 0, 64, 64}, wire);
+        try { decodeZrleWire(dec, wire, n, pf, dst); } catch (const std::exception& ex) { std::printf("  %d colours: %s\n", colours, ex.what()); ++g_failed; continue; }
+        CHECK(equalInRect(src, dst, 0, 0, 64, 64));
+    }
+}
+
 void testRaw() {
     std::printf("raw encoder\n");
     PixelFormat pf;
@@ -285,6 +305,43 @@ void testH264() {
     std::printf("  decoded %d of %d frames, worst PSNR %.1f dB\n", decoded, kFrames, worst);
     CHECK(decoded == kFrames);
     CHECK(worst > 30.0);
+}
+
+void testZrleOnRealScreen() {
+    std::puts("zrle/tight/raw on a real screenshot, every pixel format");
+    GdiCapturer gdi;
+    FrameUpdate u;
+    if (!gdi.grabFull(u)) { std::puts("  no screenshot available: skipped"); return; }
+    // The 1920x1200 screen is encoded as 64-row bands the way the server sends dirty rects, then decoded again.
+    Image src(gdi.width(), gdi.height());
+    src.px.assign(gdi.pixels(), gdi.pixels() + src.px.size());
+
+    struct Fmt { const char* name; PixelFormat pf; bool exact; };
+    PixelFormat p565; p565.bpp = 16; p565.depth = 16; p565.rMax = 31; p565.gMax = 63; p565.bMax = 31; p565.rShift = 11; p565.gShift = 5; p565.bShift = 0;
+    PixelFormat be; be.bigEndian = 1;
+    PixelFormat rgbx; rgbx.rShift = 24; rgbx.gShift = 16; rgbx.bShift = 8;
+    PixelFormat p8; p8.bpp = 8; p8.depth = 8; p8.trueColor = 0; p8.rMax = p8.gMax = p8.bMax = 0; p8.rShift = p8.gShift = p8.bShift = 0;
+    const Fmt fmts[] = {{"32bpp", PixelFormat{}, true}, {"32bpp big-endian", be, true}, {"32bpp RGBX", rgbx, true}, {"16bpp 565", p565, false}, {"8bpp colour map", p8, false}};
+    for (const Fmt& f : fmts) {
+        ZrleEncoder enc(f.pf, 3);
+        ref::ZrleDecoder dec;
+        for (int i = 0; i < 256; ++i) { uint8_t r, g, b; PixelFormat::rgb332Entry(i, r, g, b); dec.palette[i * 3] = b; dec.palette[i * 3 + 1] = g; dec.palette[i * 3 + 2] = r; }
+        Image dst(src.w, src.h);
+        bool ok = true;
+        std::string why;
+        try {
+            for (int y = 0; y < src.h; y += 64) {
+                std::vector<uint8_t> wire;
+                const int bandH = std::min(64, src.h - y);
+                const int n = enc.encode(view(src), {0, y, src.w, bandH}, wire);
+                decodeZrleWire(dec, wire, n, f.pf, dst);
+            }
+        } catch (const std::exception& ex) { ok = false; why = ex.what(); }
+        if (!ok) std::printf("  %s: decode failed: %s\n", f.name, why.c_str());
+        CHECK(ok);
+        if (ok && f.exact) CHECK(equalInRect(src, dst, 0, 0, src.w, src.h));
+        else if (ok) CHECK(psnr(src, dst) > 18.0);
+    }
 }
 
 void testQualityController() {
@@ -463,8 +520,10 @@ int main() {
     PixelFormat p565; p565.bpp = 16; p565.depth = 16; p565.rMax = 31; p565.gMax = 63; p565.bMax = 31; p565.rShift = 11; p565.gShift = 5; p565.bShift = 0;
     testZrle("16bpp 565", p565, false);
     testZrleFormatSwitch();
+    testZrlePaletteBoundary();
     testColourMapped();
     testH264();
+    testZrleOnRealScreen();
     testQualityController();
     testConfigNormalize();
     testLogRotation();

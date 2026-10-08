@@ -84,7 +84,7 @@ void ZrleEncoder::encodeTile(const FrameView& fb, int x, int y, int w, int h, st
         return;
     }
 
-    ColorSet cs(128);
+    ColorSet cs(127);  // palette RLE is 128 + size in one byte: 128 colours would wrap to 0 (= a raw tile)
     for (const PixRun& r : runs)
         if (cs.add(r.value) < 0) break;
     const int p = cs.overflow() ? 0 : cs.size();

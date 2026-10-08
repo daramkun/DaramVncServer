@@ -70,6 +70,21 @@ daramvnc install [--open-firewall]   서비스 설치 (관리자)    daramvnc st
 
 검증 내용: 문자, Shift/Ctrl/Alt 조합, `Ctrl+C`(단축키 경로), 한글 같은 유니코드 문자, 확장 키(방향키·Delete·Home·Insert), 키패드, 자동 반복, 마우스 이동·버튼·휠 4방향, 범위를 벗어난 좌표의 화면 안 클램프, 연결이 끊길 때 눌려 있던 키와 버튼의 해제, QEMU 스캔코드 경로.
 
+## 검증 스크립트 (`scripts/`)
+
+개발 중 쓰던 일회성 검증을 저장소로 옮긴 것입니다. 모두 `python scripts\x.py`로 실행합니다(`python -I`는 같은 폴더의 `common.py`를 못 찾습니다). 서버는 스크립트가 `--view-only`로 직접 띄우고 끝나면 종료하므로 이미 실행 중인 서버에는 영향이 없습니다.
+
+| 스크립트 | 용도 |
+|---|---|
+| `scripts\build.bat` | vswhere로 VS를 찾아 vcvars64 → `cmake --preset release` → 빌드까지 한 번에 |
+| `scripts\regression.py` | 한 번에 전체 검증: 단위 테스트, Tight/ZRLE/Raw 디코딩을 실제 스크린샷과 비교, 영역 요청, 8비트 컬러맵, 16비트, 3개 동시 접속, IPv4/IPv6, TLS 로그인, 퍼징, 입력 주입. PASS/FAIL/SKIP 한 줄씩 출력하고 실패가 있으면 종료 코드 1 |
+| `scripts\regression.py --animation` | 위에 더해 애니메이션 창이 필요한 검사: H.264, 느린 회선에서 JPEG 품질 하락·복구, RTT 200 ms 처리량, 멈춘 클라이언트 |
+| `scripts\stall_test.py` | 읽지 않는 클라이언트 A가 정상 클라이언트 B의 알림을 지연시키지 않는지 (B의 지연 ≤ 1000 ms) |
+| `scripts\bench_cpu.py --mode photo\|text\|both\|desktop` | 고정 부하에서 서버 CPU 사용량(업데이트당 ms, MB당 ms) |
+| `scripts\fuzz.py <port> [횟수]` | 잘못된 RFB 세션을 보낸 뒤 서버가 정상 클라이언트를 받는지 확인 |
+
+옵션: `--build DIR`(다른 빌드 폴더), `--skip-input`(시스템 전체 입력 훅 테스트 생략, 약 35초), `--only unit,decoders,...`. 화면과 비교하는 검사는 캡처되는 동안에도 화면이 바뀌므로 약간의 차이(기본 3 %)를 허용합니다.
+
 ## 구현된 표준 / 확장
 
 | 영역 | 내용 |

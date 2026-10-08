@@ -11,3 +11,4 @@ daramvnc.conf
 *.key
 *.pem
 *.log
+__pycache__/
