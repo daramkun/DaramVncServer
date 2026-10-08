@@ -86,6 +86,7 @@ std::shared_ptr<CaptureHub::Subscription> CaptureHub::subscribe() {
     auto s = std::make_shared<Subscription>();
     s->id_ = nextId_++;
     s->dirty.push_back({0, 0, layout_.w, layout_.h});  // a new client starts with nothing: owes it the whole screen
+    s->damageSince = std::chrono::steady_clock::now();
     subs_.push_back(s);
     return s;
 }
@@ -158,6 +159,7 @@ void CaptureHub::distribute(FrameUpdate& u) {
     for (auto& sp : subs_) {
         Subscription& s = *sp;
         if (u.resized) {
+            if (s.dirty.empty()) s.damageSince = std::chrono::steady_clock::now();
             s.dirty.assign(1, Rect{0, 0, layout_.w, layout_.h});
             s.moves.clear();
             s.resized = true;
@@ -170,6 +172,7 @@ void CaptureHub::distribute(FrameUpdate& u) {
                 else addDirty(s.dirty, m.dst);
             }
             for (const Rect& r : u.dirty) addDirty(s.dirty, r);
+            if (inSync && (!s.dirty.empty() || !s.moves.empty())) s.damageSince = std::chrono::steady_clock::now();
         }
         if (u.hasCursor) {
             s.hasCursor = true;
@@ -222,12 +225,17 @@ bool CaptureHub::take(Subscription& s, const Rect& region, Delta& out) {
         subtract(r, in, keep);
     }
     s.dirty = std::move(keep);
+    if (any && (!out.dirty.empty() || !out.moves.empty()))
+        out.damageAgeMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - s.damageSince).count();
+    if (!s.dirty.empty()) s.damageSince = std::chrono::steady_clock::now();  // the remainder starts waiting now
     return any;
 }
 
 void CaptureHub::markDamage(Subscription& s, const Rect& region) {
     std::lock_guard<std::mutex> lk(mu_);
-    addDirty(s.dirty, intersect(region, Rect{0, 0, layout_.w, layout_.h}));
+    const Rect r = intersect(region, Rect{0, 0, layout_.w, layout_.h});
+    if (!empty(r) && s.dirty.empty() && s.moves.empty()) s.damageSince = std::chrono::steady_clock::now();  // the clock starts with the first owed pixel
+    addDirty(s.dirty, r);
 }
 
 CaptureHub::View CaptureHub::view() {

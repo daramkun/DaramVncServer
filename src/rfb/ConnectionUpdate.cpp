@@ -189,8 +189,9 @@ int Connection::encodeRects(rfbenc::RectEncoder* enc, const rfbenc::FrameView& f
     return count;
 }
 
-void Connection::recordStats(std::chrono::steady_clock::duration encode, std::chrono::steady_clock::duration sendTime, size_t bytes) {
+void Connection::recordStats(std::chrono::steady_clock::duration encode, std::chrono::steady_clock::duration sendTime, size_t bytes, double ageMs) {
     stats_.updates++;
+    stats_.ageMs += ageMs;
     stats_.encodeMs += duration<double, std::milli>(encode).count();
     stats_.sendMs += duration<double, std::milli>(sendTime).count();
     stats_.bytes += bytes;
@@ -203,9 +204,9 @@ void Connection::recordStats(std::chrono::steady_clock::duration encode, std::ch
                 bw = bandwidth_;
                 rtt = baseRttMs_;
             }
-            LOGI("%s: %.1f updates/s, %.0f KB/update, encode %.2f ms, send %.2f ms per update, link ~%.1f MB/s (base latency %.1f ms), delay over base %.0f ms, jpeg<=%d zlib %d",
+            LOGI("%s: %.1f updates/s, %.0f KB/update, encode %.2f ms, send %.2f ms per update, link ~%.1f MB/s (base latency %.1f ms), delay over base %.0f ms, jpeg<=%d zlib %d, damage waited %.1f ms before encode",
                  peer_.c_str(), stats_.updates / secs, stats_.bytes / 1024.0 / stats_.updates, stats_.encodeMs / stats_.updates,
-                 stats_.sendMs / stats_.updates, bw / 1048576.0, rtt < 1e8 ? rtt : 0.0, lastExcessMs_, adaptJpeg_, adaptZlib_);
+                 stats_.sendMs / stats_.updates, bw / 1048576.0, rtt < 1e8 ? rtt : 0.0, lastExcessMs_, adaptJpeg_, adaptZlib_, stats_.ageMs / stats_.updates);
         }
         stats_ = Stats{};
         stats_.since = steady_clock::now();
@@ -316,7 +317,7 @@ Connection::UpdateResult Connection::sendUpdate(bool nonIncremental, const Caps&
     if (caps.fence) appendFence(msg, msg.size());
     const size_t wireBytes = msg.size();
     if (!send(msg)) return UpdateResult::Error;
-    recordStats(encodeEnd - encodeStart, steady_clock::now() - encodeEnd, wireBytes);
+    recordStats(encodeEnd - encodeStart, steady_clock::now() - encodeEnd, wireBytes, d.damageAgeMs);
     if (msg.capacity() > (48u << 20)) std::vector<uint8_t>().swap(msg);  // don't pin a huge buffer after a one-off full frame
 
     // The request is answered either way; in continuous mode the client sends no more of them, and a stale

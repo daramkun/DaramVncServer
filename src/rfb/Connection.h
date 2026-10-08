@@ -89,7 +89,7 @@ private:
     rfbenc::RectEncoder* pickEncoder(const Caps& caps, const PixelFormat& pf);
     int encodeRects(rfbenc::RectEncoder* enc, const rfbenc::FrameView& fb, const std::vector<Rect>& rects, std::vector<uint8_t>& msg);
     void adaptQuality(const Caps& caps);
-    void recordStats(std::chrono::steady_clock::duration encode, std::chrono::steady_clock::duration sendTime, size_t bytes);
+    void recordStats(std::chrono::steady_clock::duration encode, std::chrono::steady_clock::duration sendTime, size_t bytes, double ageMs);
     bool send(const std::vector<uint8_t>& data);
 
     // ConnectionClipboard.cpp
@@ -168,6 +168,7 @@ private:
         int updates = 0;
         double encodeMs = 0, sendMs = 0;
         size_t bytes = 0;
+        double ageMs = 0;
         std::chrono::steady_clock::time_point since = std::chrono::steady_clock::now();
     } stats_;
 

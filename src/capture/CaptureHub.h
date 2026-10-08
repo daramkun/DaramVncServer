@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -28,6 +29,7 @@ public:
         int resizeReason = 0;         // ExtendedDesktopSize reason: 0 server, 1 this client asked, 2 another client
         bool hasCursor = false;
         CursorShape cursor;
+        std::chrono::steady_clock::time_point damageSince{};  // when `dirty` last went from empty to non-empty
     };
 
     struct Delta {
@@ -37,6 +39,7 @@ public:
         int resizeReason = 0;
         bool hasCursor = false;
         CursorShape cursor;
+        double damageAgeMs = 0;  // how long the oldest delivered damage had been waiting
     };
 
     struct Layout {

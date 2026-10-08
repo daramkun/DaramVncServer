@@ -56,4 +56,6 @@ private:
     SSL* ssl_;
     std::mutex sslMutex_;
     std::atomic<bool> closed_{false};
+    std::atomic<unsigned long long> waits_{0}, idleWakeups_{0};  // select() calls / calls that timed out with nothing to do
+    unsigned long long createdTick_ = 0;
 };

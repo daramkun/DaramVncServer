@@ -7,6 +7,8 @@
 
 #include <algorithm>
 
+#include "util/Log.h"
+
 PlainTransport::PlainTransport(SOCKET s) : sock_(s) {
     BOOL nodelay = TRUE;
     setsockopt(sock_, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nodelay), sizeof nodelay);
@@ -87,11 +89,15 @@ std::unique_ptr<TlsTransport> TlsTransport::accept(SOCKET sock, SSL_CTX* ctx, st
     setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeoutMs), sizeof timeoutMs);
     u_long nb = 1;
     ioctlsocket(sock, FIONBIO, &nb);
-    return std::unique_ptr<TlsTransport>(new TlsTransport(sock, ssl));
+    auto t = std::unique_ptr<TlsTransport>(new TlsTransport(sock, ssl));
+    t->createdTick_ = GetTickCount64();
+    return t;
 }
 
 TlsTransport::~TlsTransport() {
     closed_ = true;
+    const double secs = static_cast<double>(GetTickCount64() - createdTick_) / 1000.0;
+    if (secs > 5) LOGI("TLS socket waits: %llu select calls, %llu timed out with nothing to do (%.1f/s over %.0f s)", waits_.load(), idleWakeups_.load(), idleWakeups_.load() / secs, secs);
     if (ssl_) {
         SSL_free(ssl_);  // not a clean TLS shutdown on purpose: peer may already be gone
     }
@@ -103,9 +109,11 @@ bool TlsTransport::waitSocket(bool forWrite) {
         fd_set fds;
         FD_ZERO(&fds);
         FD_SET(sock_, &fds);
-        timeval tv{0, 50000};  // wake regularly to notice shutdown()
+        timeval tv{0, 250000};  // only a safety net to notice shutdown(): data and FIN wake select() immediately
         int r = select(0, forWrite ? nullptr : &fds, forWrite ? &fds : nullptr, nullptr, &tv);
+        ++waits_;
         if (r > 0) return true;
+        if (r == 0) ++idleWakeups_;
         if (r < 0) return false;
     }
     return false;
