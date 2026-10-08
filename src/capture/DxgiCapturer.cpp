@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstring>
 
+#include "capture/ChangedBands.h"
 #include "util/Desktop.h"
 
 using Microsoft::WRL::ComPtr;
@@ -80,9 +81,12 @@ bool DxgiCapturer::init() {
         return false;
     }
 
-    w_ = static_cast<int>(td.Width);
-    h_ = static_cast<int>(td.Height);
-    fb_.assign(static_cast<size_t>(w_) * h_ * 4, 0);
+    {
+        FrameWriteGuard guard(frameLock_);  // geometry and buffer change together, as seen by readers
+        w_ = static_cast<int>(td.Width);
+        h_ = static_cast<int>(td.Height);
+        fb_.assign(static_cast<size_t>(w_) * h_ * 4, 0);
+    }
     needFull_ = true;
     return true;
 }
@@ -192,9 +196,12 @@ AcquireResult DxgiCapturer::acquire(int timeoutMs, FrameUpdate& out) {
             ctx_->CopyResource(staging_.Get(), tex.Get());
             D3D11_MAPPED_SUBRESOURCE m{};
             if (SUCCEEDED(ctx_->Map(staging_.Get(), 0, D3D11_MAP_READ, 0, &m))) {
-                for (int y = 0; y < h_; ++y)
-                    std::memcpy(&fb_[static_cast<size_t>(y) * w_ * 4], static_cast<uint8_t*>(m.pData) + y * m.RowPitch,
-                                static_cast<size_t>(w_) * 4);
+                {
+                    FrameWriteGuard guard(frameLock_);
+                    for (int y = 0; y < h_; ++y)
+                        std::memcpy(&fb_[static_cast<size_t>(y) * w_ * 4], static_cast<uint8_t*>(m.pData) + y * m.RowPitch,
+                                    static_cast<size_t>(w_) * 4);
+                }
                 ctx_->Unmap(staging_.Get(), 0);
                 out.dirty.push_back({0, 0, w_, h_});
                 out.resized = resizedPending_;
@@ -216,31 +223,38 @@ AcquireResult DxgiCapturer::acquire(int timeoutMs, FrameUpdate& out) {
                         if (mr.dst.w <= 0 || mr.dst.h <= 0 || mr.srcX < 0 || mr.srcY < 0 ||
                             mr.srcX + mr.dst.w > w_ || mr.srcY + mr.dst.h > h_)
                             continue;
-                        applyMove(mr);
-                        out.moves.push_back(mr);
+                        out.moves.push_back(mr);  // applied below, under the frame lock, once the GPU data is mapped
                     }
                     const UINT nDirty = dirtyBytes / sizeof(RECT);
+                    std::vector<Rect> reported;  // what DXGI says changed
                     for (UINT i = 0; i < nDirty; ++i) {
                         Rect r = clampRect(dirty[i], w_, h_);
                         if (r.w <= 0 || r.h <= 0) continue;
                         D3D11_BOX box{static_cast<UINT>(r.x), static_cast<UINT>(r.y), 0,
                                       static_cast<UINT>(r.x + r.w), static_cast<UINT>(r.y + r.h), 1};
                         ctx_->CopySubresourceRegion(staging_.Get(), 0, r.x, r.y, 0, tex.Get(), 0, &box);
-                        out.dirty.push_back(r);
+                        reported.push_back(r);
                     }
-                    if (!out.dirty.empty()) {
-                        D3D11_MAPPED_SUBRESOURCE m{};
-                        if (SUCCEEDED(ctx_->Map(staging_.Get(), 0, D3D11_MAP_READ, 0, &m))) {
-                            for (const Rect& r : out.dirty)
+                    // Map waits for the GPU, so it happens before the frame lock is taken.
+                    D3D11_MAPPED_SUBRESOURCE m{};
+                    const bool mapped = !reported.empty() && SUCCEEDED(ctx_->Map(staging_.Get(), 0, D3D11_MAP_READ, 0, &m));
+                    if (!reported.empty() && !mapped) needFull_ = true;  // lost pixels: resynchronise on the next frame
+                    if (mapped || !out.moves.empty()) {
+                        FrameWriteGuard guard(frameLock_);
+                        for (const MoveRect& mr : out.moves) applyMove(mr);  // moves first, then fresh pixels
+                        if (mapped) {
+                            const uint8_t* src = static_cast<const uint8_t*>(m.pData);
+                            std::vector<Rect> changed;
+                            for (const Rect& r : reported)
+                                changedBands(fb_.data(), static_cast<size_t>(w_) * 4, src, m.RowPitch, r, changed);
+                            for (const Rect& r : changed)
                                 for (int y = r.y; y < r.y + r.h; ++y)
-                                    std::memcpy(&fb_[(static_cast<size_t>(y) * w_ + r.x) * 4],
-                                                static_cast<uint8_t*>(m.pData) + y * m.RowPitch + r.x * 4,
+                                    std::memcpy(&fb_[(static_cast<size_t>(y) * w_ + r.x) * 4], src + static_cast<size_t>(y) * m.RowPitch + r.x * 4,
                                                 static_cast<size_t>(r.w) * 4);
-                            ctx_->Unmap(staging_.Get(), 0);
-                        } else {
-                            out.dirty.clear();
+                            out.dirty = std::move(changed);  // only pixels that really differ
                         }
                     }
+                    if (mapped) ctx_->Unmap(staging_.Get(), 0);
                     if (out.dirty.size() > kMaxDirtyRects) {
                         Rect bb = out.dirty[0];
                         int r = bb.x + bb.w, b = bb.y + bb.h;

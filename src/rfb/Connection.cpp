@@ -11,6 +11,7 @@
 #include "security/Auth.h"
 #include "util/Desktop.h"
 #include "util/Log.h"
+#include "util/ThreadCpu.h"
 
 using rfbenc::put16;
 using rfbenc::put32;
@@ -472,6 +473,7 @@ bool Connection::messageLoop() {
 }
 
 void Connection::run() {
+    threadcpu::Scope cpuScope("reader");
     desktop::attachToInputDesktop();
     tp_->setReadTimeout(20000);  // don't let an unauthenticated peer hold a thread forever
     if (!negotiate()) {

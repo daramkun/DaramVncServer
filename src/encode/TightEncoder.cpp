@@ -7,6 +7,7 @@
 #include <cassert>
 
 #include "encode/ColorSet.h"
+#include "encode/TightProfile.h"
 #include "encode/TileClass.h"
 #include "util/WorkerPool.h"
 
@@ -101,7 +102,10 @@ void TightEncoder::deflateRect(int stream, uint8_t ctrl, const std::vector<uint8
     z.avail_in = static_cast<uint32_t>(data.size());
     z.next_out = zbuf_.data();
     z.avail_out = static_cast<uint32_t>(zbuf_.size());
-    zng_deflate(&z, Z_SYNC_FLUSH);
+    {
+        ScopedNs t(tightProfile().deflateNs);
+        zng_deflate(&z, Z_SYNC_FLUSH);
+    }
     const size_t produced = zbuf_.size() - z.avail_out;
     putCompactLength(out, produced);
     out.insert(out.end(), zbuf_.begin(), zbuf_.begin() + produced);
@@ -109,23 +113,36 @@ void TightEncoder::deflateRect(int stream, uint8_t ctrl, const std::vector<uint8
 
 void TightEncoder::encodeBasic(const FrameView& fb, const Run& r, std::vector<uint8_t>& out) {
     ColorSet cs(ColorSet::kMax);
-    for (int j = 0; j < r.h && !cs.overflow(); ++j) {
-        const uint8_t* p = fb.at(r.x, r.y + j);
-        for (int i = 0; i < r.w; ++i)
-            if (cs.add(pixelRgb(p + i * 4)) < 0) break;
+    {
+        ScopedNs t(tightProfile().scanNs);
+        for (int j = 0; j < r.h && !cs.overflow(); ++j) {
+            const uint8_t* p = fb.at(r.x, r.y + j);
+            for (int i = 0; i < r.w; ++i)
+                if (cs.add(pixelRgb(p + i * 4)) < 0) break;
+        }
     }
+    ScopedNs buildTimer(tightProfile().buildNs);
 
-    std::vector<uint8_t> data, prefix;
+    std::vector<uint8_t>& data = scratchData_;      // reused between runs: no per-run allocation
+    std::vector<uint8_t>& prefix = scratchPrefix_;
+    data.clear();
+    prefix.clear();
     if (!cs.overflow() && cs.size() == 1) {  // merged tiles turned out uniform
         out.push_back(0x80);
         putRgb(out, cs.color(0));
         return;
     }
     if (cs.overflow()) {  // full colour, copy filter, stream 0
-        data.reserve(static_cast<size_t>(r.w) * r.h * 3);
+        data.resize(static_cast<size_t>(r.w) * r.h * 3);
+        uint8_t* o = data.data();
         for (int j = 0; j < r.h; ++j) {
             const uint8_t* p = fb.at(r.x, r.y + j);
-            for (int i = 0; i < r.w; ++i) putRgb(data, pixelRgb(p + i * 4));
+            for (int i = 0; i < r.w; ++i) {
+                o[0] = p[i * 4 + 2];  // BGRA -> RGB
+                o[1] = p[i * 4 + 1];
+                o[2] = p[i * 4];
+                o += 3;
+            }
         }
         deflateRect(0, 0x00, prefix, data, out);
         return;
@@ -145,10 +162,11 @@ void TightEncoder::encodeBasic(const FrameView& fb, const Run& r, std::vector<ui
         }
         deflateRect(1, 0x40 | (1 << 4), prefix, data, out);
     } else {
-        data.reserve(static_cast<size_t>(r.w) * r.h);
+        data.resize(static_cast<size_t>(r.w) * r.h);
+        uint8_t* o = data.data();
         for (int j = 0; j < r.h; ++j) {
             const uint8_t* p = fb.at(r.x, r.y + j);
-            for (int i = 0; i < r.w; ++i) data.push_back(static_cast<uint8_t>(cs.add(pixelRgb(p + i * 4))));
+            for (int i = 0; i < r.w; ++i) *o++ = static_cast<uint8_t>(cs.add(pixelRgb(p + i * 4)));
         }
         deflateRect(2, 0x40 | (2 << 4), prefix, data, out);
     }
@@ -160,6 +178,7 @@ int TightEncoder::encode(const FrameView& fb, const Rect& rect, std::vector<uint
 
     // 1. Plan: classify tiles per 64-row band and merge neighbours into runs.
     std::vector<Run> runs;
+    ScopedNs planTimer(tightProfile().planNs);
     for (int by = rect.y; by < rect.y + rect.h; by += kTile) {
         const int bh = std::min(kTile, rect.y + rect.h - by);
         const size_t bandStart = runs.size();

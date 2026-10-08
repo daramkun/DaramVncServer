@@ -9,6 +9,7 @@
 #include "capture/GdiCapturer.h"
 #include "encode/RawEncoder.h"
 #include "encode/TightEncoder.h"
+#include "encode/TightProfile.h"
 #include "encode/TileClass.h"
 #include "encode/ZrleEncoder.h"
 
@@ -43,9 +44,14 @@ void run(const char* name, const FrameView& fb, int iters) {
 
     for (int level : {1, 3}) {
         TightEncoder enc(pf, -1, level);
+        auto& prof = tightProfile();
+        prof.planNs = prof.scanNs = prof.buildNs = prof.deflateNs = 0;
         size_t bytes = 0;
         const double ms = timeMs(iters, [&] { std::vector<uint8_t> o; enc.encode(fb, all, o); bytes = o.size(); });
         std::printf("  Tight lossless, zlib %d         %7.2f ms   %8.1f KB\n", level, ms, bytes / 1024.0);
+        const double n = iters + 1;  // timeMs() runs one warm-up call
+        std::printf("      of which: plan+classify %.2f, palette scan %.2f, scan+build %.2f, deflate %.2f ms\n",
+                    prof.planNs / 1e6 / n, prof.scanNs / 1e6 / n, prof.buildNs / 1e6 / n, prof.deflateNs / 1e6 / n);
     }
     {
         TightEncoder enc(pf, 80, 3);

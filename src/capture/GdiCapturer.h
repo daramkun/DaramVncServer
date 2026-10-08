@@ -23,5 +23,5 @@ private:
     int width_ = 0, height_ = 0;
     HDC screenDc_ = nullptr, memDc_ = nullptr;
     HBITMAP bmp_ = nullptr, oldBmp_ = nullptr;
-    std::vector<uint8_t> pixels_, prev_;
+    std::vector<uint8_t> pixels_, tmp_;  // tmp_ receives each screenshot; pixels_ is what consumers read
 };

@@ -8,51 +8,13 @@
 #include "capture/GdiCapturer.h"
 #include "capture/MultiCapturer.h"
 #include "util/Log.h"
+#include "util/ThreadCpu.h"
 
 namespace {
 
 constexpr size_t kMaxPendingRects = 16;
 
 bool empty(const Rect& r) { return r.w <= 0 || r.h <= 0; }
-
-// Applications (and DXGI itself) often report regions as dirty that were repainted with identical pixels
-// (caret blinks, whole-window invalidations). Comparing against what we already hold shrinks a reported
-// rectangle to the bands that really differ, so no client spends encode time or bandwidth on them.
-void changedBands(const uint8_t* oldFb, const uint8_t* newFb, int stridePx, const Rect& r, std::vector<Rect>& out) {
-    constexpr int kBand = 16;
-    const size_t rowBytes = static_cast<size_t>(r.w) * 4;
-    Rect cur;
-    auto flush = [&] {
-        if (cur.w > 0) out.push_back(cur);
-        cur = Rect{};
-    };
-    for (int by = r.y; by < r.y + r.h; by += kBand) {
-        const int bh = std::min(kBand, r.y + r.h - by);
-        int minx = r.w, maxx = -1;
-        for (int y = by; y < by + bh; ++y) {
-            const uint32_t* a = reinterpret_cast<const uint32_t*>(oldFb + (static_cast<size_t>(y) * stridePx + r.x) * 4);
-            const uint32_t* b = reinterpret_cast<const uint32_t*>(newFb + (static_cast<size_t>(y) * stridePx + r.x) * 4);
-            if (std::memcmp(a, b, rowBytes) == 0) continue;
-            int i = 0;
-            while (i < r.w && a[i] == b[i]) ++i;
-            int j = r.w - 1;
-            while (j > i && a[j] == b[j]) --j;
-            minx = std::min(minx, i);
-            maxx = std::max(maxx, j);
-        }
-        if (maxx < 0) { flush(); continue; }
-        const Rect band{r.x + minx, by, maxx - minx + 1, bh};
-        const bool touches = cur.w > 0 && cur.y + cur.h == by && band.x <= cur.x + cur.w && cur.x <= band.x + band.w;
-        if (touches) {
-            const int x1 = std::min(cur.x, band.x), x2 = std::max(cur.x + cur.w, band.x + band.w);
-            cur = {x1, cur.y, x2 - x1, cur.h + bh};
-        } else {
-            flush();
-            cur = band;
-        }
-    }
-    flush();
-}
 
 Rect intersect(const Rect& a, const Rect& b) {
     const int x1 = std::max(a.x, b.x), y1 = std::max(a.y, b.y);
@@ -106,16 +68,11 @@ bool CaptureHub::startLocked() {
         LOGI("DXGI duplication unavailable, using GDI capture");
         capturer_ = std::make_unique<GdiCapturer>();
     }
+    capturer_->setFrameLock(&fbMu_);  // the capturer's own buffer is the shared framebuffer: no private copy here
     FrameUpdate u;
     if (!capturer_->grabFull(u)) {
         capturer_.reset();
         return false;
-    }
-    {
-        std::unique_lock<std::shared_mutex> fb(fbMu_);
-        fbW_ = capturer_->width();
-        fbH_ = capturer_->height();
-        fb_.assign(capturer_->pixels(), capturer_->pixels() + static_cast<size_t>(fbW_) * fbH_ * 4);
     }
     layout_ = {capturer_->width(), capturer_->height(), capturer_->screens()};
     thread_ = std::thread([this] { captureLoop(); });
@@ -153,12 +110,18 @@ void CaptureHub::unsubscribe(const std::shared_ptr<Subscription>& sub) {
 }
 
 void CaptureHub::captureLoop() {
+    threadcpu::Scope cpuScope("capture");
     using clock = std::chrono::steady_clock;
     auto ms = [](clock::duration d) { return std::chrono::duration<double, std::milli>(d).count(); };
     int frames = 0;
-    double acquireMs = 0, applyMs = 0, distMs = 0;
+    double acquireMs = 0, distMs = 0;
     auto windowStart = clock::now();
+    auto lastCpuReport = clock::now();
     while (!stop_) {
+        if (clock::now() - lastCpuReport > std::chrono::seconds(10)) {
+            threadcpu::logReport();
+            lastCpuReport = clock::now();
+        }
         FrameUpdate u;
         const auto t0 = clock::now();
         const AcquireResult r = capturer_->acquire(100, u);  // wakes immediately when the screen changes
@@ -170,46 +133,22 @@ void CaptureHub::captureLoop() {
         }
         if (r == AcquireResult::Timeout) continue;
         const auto t1 = clock::now();
-        applyToFramebuffer(u);
-        const auto t2 = clock::now();
-        if (u.dirty.empty() && u.moves.empty() && !u.hasCursor && !u.resized) continue;  // identical repaint: nothing to tell anyone
+        // The capturer already dropped pixels that did not really change; an empty result means an identical repaint.
+        if (u.dirty.empty() && u.moves.empty() && !u.hasCursor && !u.resized) continue;
         distribute(u);
         const auto t3 = clock::now();
         ++frames;
         acquireMs += ms(t1 - t0);
-        applyMs += ms(t2 - t1);
-        distMs += ms(t3 - t2);
+        distMs += ms(t3 - t1);
         if (t3 - windowStart > std::chrono::seconds(10)) {
             if (frames >= 20)
-                LOGI("capture: %.1f frames/s, per frame: acquire+read-back %.2f ms, framebuffer update %.2f ms, distribute %.3f ms",
-                     frames / ms(t3 - windowStart) * 1000.0, acquireMs / frames, applyMs / frames, distMs / frames);
+                LOGI("capture: %.1f frames/s, per frame: acquire+read-back %.2f ms, distribute %.3f ms",
+                     frames / ms(t3 - windowStart) * 1000.0, acquireMs / frames, distMs / frames);
             frames = 0;
-            acquireMs = applyMs = distMs = 0;
+            acquireMs = distMs = 0;
             windowStart = t3;
         }
     }
-}
-
-void CaptureHub::applyToFramebuffer(FrameUpdate& u) {
-    std::unique_lock<std::shared_mutex> fb(fbMu_);
-    const int w = capturer_->width(), h = capturer_->height();
-    const uint8_t* src = capturer_->pixels();
-    if (u.resized || w != fbW_ || h != fbH_) {  // geometry changed: the capturer's buffer holds the whole new screen
-        fbW_ = w;
-        fbH_ = h;
-        fb_.assign(src, src + static_cast<size_t>(w) * h * 4);
-        return;
-    }
-    auto copy = [&](const Rect& r) {
-        for (int y = r.y; y < r.y + r.h; ++y)
-            std::memcpy(&fb_[(static_cast<size_t>(y) * w + r.x) * 4], src + (static_cast<size_t>(y) * w + r.x) * 4,
-                        static_cast<size_t>(r.w) * 4);
-    };
-    for (const MoveRect& m : u.moves) copy(m.dst);
-    std::vector<Rect> changed;
-    for (const Rect& r : u.dirty) changedBands(fb_.data(), src, w, r, changed);
-    for (const Rect& r : changed) copy(r);
-    u.dirty = std::move(changed);  // what the clients are told about: only real changes
 }
 
 void CaptureHub::distribute(FrameUpdate& u) {
@@ -294,9 +233,11 @@ void CaptureHub::markDamage(Subscription& s, const Rect& region) {
 CaptureHub::View CaptureHub::view() {
     std::shared_lock<std::shared_mutex> lock(fbMu_);
     View v;
-    v.bgra = fb_.data();
-    v.w = fbW_;
-    v.h = fbH_;
+    if (capturer_) {  // the capturer changes buffer/geometry only under the exclusive lock we now hold shared
+        v.bgra = capturer_->pixels();
+        v.w = capturer_->width();
+        v.h = capturer_->height();
+    }
     v.lock = std::move(lock);
     return v;
 }

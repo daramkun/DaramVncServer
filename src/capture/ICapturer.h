@@ -1,5 +1,7 @@
 #pragma once
 #include <cstdint>
+#include <mutex>
+#include <shared_mutex>
 #include <vector>
 
 struct Rect {
@@ -35,9 +37,24 @@ struct ScreenInfo {
 
 enum class AcquireResult { Updated, Timeout, Failed };
 
+// Exclusive-locks the frame lock (if any) for as long as a capturer modifies its pixel buffer.
+class FrameWriteGuard {
+public:
+    explicit FrameWriteGuard(std::shared_mutex* m) : m_(m) { if (m_) m_->lock(); }
+    ~FrameWriteGuard() { if (m_) m_->unlock(); }
+    FrameWriteGuard(const FrameWriteGuard&) = delete;
+    FrameWriteGuard& operator=(const FrameWriteGuard&) = delete;
+
+private:
+    std::shared_mutex* m_;
+};
+
 class ICapturer {
 public:
     virtual ~ICapturer() = default;
+    // Readers of pixels() hold this lock shared; the capturer holds it exclusive while it changes the pixel
+    // buffer or its geometry. That lets consumers use the capturer's buffer directly instead of keeping a copy.
+    void setFrameLock(std::shared_mutex* lock) { frameLock_ = lock; }
     virtual int width() const = 0;
     virtual int height() const = 0;
     // Current framebuffer, tightly packed BGRA (stride = width*4). Valid after a successful acquire/grabFull.
@@ -48,4 +65,7 @@ public:
     virtual AcquireResult acquire(int timeoutMs, FrameUpdate& out) = 0;
     // Forces a complete snapshot; out.dirty holds the full-screen rect.
     virtual bool grabFull(FrameUpdate& out) = 0;
+
+protected:
+    std::shared_mutex* frameLock_ = nullptr;
 };

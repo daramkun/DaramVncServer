@@ -44,6 +44,7 @@ bool MultiCapturer::build() {
     for (size_t i = 0; !changed && i < screens.size(); ++i) changed = !same(screens[i], screens_[i]);
     if (!screens_.empty() && changed) layoutChangedPending_ = true;
 
+    FrameWriteGuard guard(frameLock_);  // readers must never see new geometry with the old buffer
     subs_ = std::move(subs);
     screens_ = std::move(screens);
     w_ = w;
@@ -61,6 +62,7 @@ void MultiCapturer::blit(const Sub& s, const Rect& r) {
 }
 
 void MultiCapturer::merge(const Sub& s, FrameUpdate& su, FrameUpdate& out, bool full) {
+    FrameWriteGuard guard(frameLock_);
     for (const MoveRect& m : su.moves) {
         blit(s, m.dst);
         out.moves.push_back({{m.dst.x + s.ox, m.dst.y + s.oy, m.dst.w, m.dst.h}, m.srcX + s.ox, m.srcY + s.oy});
@@ -102,7 +104,10 @@ bool MultiCapturer::grabFull(FrameUpdate& out) {
         FrameUpdate su;
         if (!s.cap->grabFull(su)) return false;
         const Rect all{0, 0, s.cap->width(), s.cap->height()};
-        blit(s, all);
+        {
+            FrameWriteGuard guard(frameLock_);
+            blit(s, all);
+        }
         if (su.hasCursor) {
             out.cursor = std::move(su.cursor);
             out.hasCursor = true;

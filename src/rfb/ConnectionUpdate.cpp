@@ -5,6 +5,7 @@
 #include "rfb/Connection.h"
 #include "util/Desktop.h"
 #include "util/Log.h"
+#include "util/ThreadCpu.h"
 
 using namespace std::chrono;
 using rfbenc::put16;
@@ -329,6 +330,7 @@ bool Connection::sendRefine(const Caps& caps, const PixelFormat& pf) {
 }
 
 void Connection::updaterMain() {
+    threadcpu::Scope cpuScope("updater");
     while (true) {
         Caps caps;
         PixelFormat pf;

@@ -44,6 +44,7 @@ private:
     struct ZState;  // zlib-ng deflate streams, hidden so this header does not pull in zlib-ng
     std::unique_ptr<ZState> z_;
     std::vector<uint8_t> zbuf_;
+    std::vector<uint8_t> scratchData_, scratchPrefix_;  // per-run work buffers, reused
 };
 
 // Writes Tight's 1-3 byte compact length.

@@ -10,6 +10,7 @@ GdiCapturer::GdiCapturer() {
     bmp_ = CreateCompatibleBitmap(screenDc_, width_, height_);
     oldBmp_ = static_cast<HBITMAP>(SelectObject(memDc_, bmp_));
     pixels_.resize(static_cast<size_t>(width_) * height_ * 4);
+    tmp_.resize(pixels_.size());
 }
 
 GdiCapturer::~GdiCapturer() {
@@ -28,7 +29,7 @@ void GdiCapturer::capture() {
     bi.bmiHeader.biPlanes = 1;
     bi.bmiHeader.biBitCount = 32;
     bi.bmiHeader.biCompression = BI_RGB;
-    GetDIBits(memDc_, bmp_, 0, static_cast<UINT>(height_), pixels_.data(), &bi, DIB_RGB_COLORS);
+    GetDIBits(memDc_, bmp_, 0, static_cast<UINT>(height_), tmp_.data(), &bi, DIB_RGB_COLORS);
 }
 
 AcquireResult GdiCapturer::acquire(int timeoutMs, FrameUpdate& out) {
@@ -36,16 +37,16 @@ AcquireResult GdiCapturer::acquire(int timeoutMs, FrameUpdate& out) {
     capture();
     const size_t stride = static_cast<size_t>(width_) * 4;
     int top = 0, bottom = height_;
-    if (prev_.size() == pixels_.size()) {
-        while (top < height_ && !std::memcmp(&pixels_[top * stride], &prev_[top * stride], stride)) ++top;
-        if (top == height_) {
-            Sleep(static_cast<DWORD>(timeoutMs));
-            return AcquireResult::Timeout;
-        }
-        while (bottom > top && !std::memcmp(&pixels_[(bottom - 1) * stride], &prev_[(bottom - 1) * stride], stride))
-            --bottom;
+    while (top < height_ && !std::memcmp(&tmp_[top * stride], &pixels_[top * stride], stride)) ++top;
+    if (top == height_) {
+        Sleep(static_cast<DWORD>(timeoutMs));
+        return AcquireResult::Timeout;
     }
-    prev_ = pixels_;
+    while (bottom > top && !std::memcmp(&tmp_[(bottom - 1) * stride], &pixels_[(bottom - 1) * stride], stride)) --bottom;
+    {
+        FrameWriteGuard guard(frameLock_);  // consumers read pixels_ directly, so publish only the changed rows
+        std::memcpy(&pixels_[top * stride], &tmp_[top * stride], (bottom - top) * stride);
+    }
     out.dirty.push_back({0, top, width_, bottom - top});
     return AcquireResult::Updated;
 }
@@ -53,7 +54,10 @@ AcquireResult GdiCapturer::acquire(int timeoutMs, FrameUpdate& out) {
 bool GdiCapturer::grabFull(FrameUpdate& out) {
     out.clear();
     capture();
-    prev_ = pixels_;
+    {
+        FrameWriteGuard guard(frameLock_);
+        pixels_ = tmp_;
+    }
     out.dirty.push_back({0, 0, width_, height_});
     return true;
 }

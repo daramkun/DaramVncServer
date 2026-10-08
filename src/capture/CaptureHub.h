@@ -78,7 +78,6 @@ public:
 private:
     bool startLocked();
     void captureLoop();
-    void applyToFramebuffer(FrameUpdate& u);
     void distribute(FrameUpdate& u);
     static void addDirty(std::vector<Rect>& list, const Rect& r);
 
@@ -91,9 +90,7 @@ private:
     uint64_t resizeInitiator_ = 0;
     unsigned long long resizeTime_ = 0;
 
-    std::shared_mutex fbMu_;
-    std::vector<uint8_t> fb_;
-    int fbW_ = 0, fbH_ = 0;  // dimensions of fb_ (guarded by fbMu_)
+    std::shared_mutex fbMu_;  // guards the capturer's pixel buffer (see ICapturer::setFrameLock)
 
     std::unique_ptr<ICapturer> capturer_;  // used by the capture thread only (after start)
     std::thread thread_;

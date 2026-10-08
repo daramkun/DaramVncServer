@@ -4,6 +4,7 @@
 
 #include <chrono>
 
+#include "util/ThreadCpu.h"
 std::string wideToUtf8(const std::wstring& w) {
     if (w.empty()) return {};
     int n = WideCharToMultiByte(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
@@ -48,6 +49,7 @@ ClipboardMonitor::ClipboardMonitor() {
 }
 
 void ClipboardMonitor::threadMain() {
+    threadcpu::Scope cpuScope("clipboard");
     WNDCLASSW wc{};
     wc.lpfnWndProc = ClipboardWndProc::proc;
     wc.hInstance = GetModuleHandleW(nullptr);

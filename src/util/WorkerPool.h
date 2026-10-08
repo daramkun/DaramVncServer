@@ -7,6 +7,7 @@
 #include <thread>
 #include <vector>
 
+#include "util/ThreadCpu.h"
 // Small persistent thread pool for data-parallel loops (e.g. JPEG-compressing independent rectangles). Creating
 // threads for every frame costs CPU; this keeps them parked between calls. The calling thread takes part in the
 // work. If another caller is already using the pool, parallelFor() just runs serially instead of waiting.
@@ -74,6 +75,7 @@ private:
     }
 
     void loop() {
+        threadcpu::Scope cpuScope("jpeg-worker");
         uint64_t seen = 0;
         for (;;) {
             std::shared_ptr<Run> run;
