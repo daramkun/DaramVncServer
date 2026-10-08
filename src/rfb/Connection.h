@@ -94,7 +94,8 @@ private:
 
     // ConnectionClipboard.cpp
     void sendClipboardCaps();
-    void onLocalClipboardChanged();
+    void onLocalClipboardChanged();   // called on the shared clipboard thread: must never block
+    void flushClipboardNotify();      // called on this connection's updater thread
     void sendClipboardNotify();
     void sendClipboardProvide();
     bool sendLegacyCutText(const std::wstring& text);
@@ -135,6 +136,7 @@ private:
     bool announcedFence_ = false, announcedContinuous_ = false;
     bool qemuKeyAnnounced_ = false;
     bool announceQemuKey_ = false;  // pending empty pseudo-rectangle telling the client we accept extended key events
+    bool clipboardPending_ = false;  // the local clipboard changed; the updater thread tells the client
 
     std::thread updater_;
     std::atomic<bool> dead_{false};

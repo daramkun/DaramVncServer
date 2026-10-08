@@ -36,9 +36,17 @@ struct Io {
     size_t rx = 0, tx = 0;
     double throttleBps = 0;  // simulate a slow link by pacing reads against a virtual clock
     double throttleUntilSec = 0;  // >0: the slow link recovers after this many seconds
+    double stallAtSec = 0, stallForSec = 0;  // stop reading entirely for stallForSec, starting stallAtSec into the run
+    bool stalled = false;
     std::chrono::steady_clock::time_point startTime = std::chrono::steady_clock::now();
     std::chrono::steady_clock::time_point virtualClock = std::chrono::steady_clock::now();
     void readExact(void* buf, size_t n) {
+        if (stallAtSec > 0 && !stalled &&
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - startTime).count() > stallAtSec) {
+            stalled = true;  // a client stuck in decoding or on a hung machine: the socket just stops being read
+            std::printf("client: not reading for %.0f s\n", stallForSec);
+            Sleep(static_cast<DWORD>(stallForSec * 1000));
+        }
         readRaw(buf, n);
         if (throttleBps > 0 && throttleUntilSec > 0 &&
             std::chrono::duration<double>(std::chrono::steady_clock::now() - startTime).count() > throttleUntilSec)
@@ -92,7 +100,7 @@ void put32(std::vector<uint8_t>& v, uint32_t x) { for (int i = 3; i >= 0; --i) v
 int main(int argc, char** argv) {
     std::string host = "127.0.0.1", user, pass, vncPass, enc = "tight", pfName = "native";
     int port = 5900, seconds = 5, quality = 8;
-    double throttleKBps = 0, throttleUntil = 0, ackDelayMs = 0;
+    double throttleKBps = 0, throttleUntil = 0, ackDelayMs = 0, stallAt = 0, stallFor = 0;
     bool continuous = false, verify = false, wantCursor = true, qemuKey = false, wantH264 = false;
     int rx = 0, ry = 0, rw = -1, rh = -1, resizeW = 0, resizeH = 0;
     int positional = 0;
@@ -108,6 +116,8 @@ int main(int argc, char** argv) {
         else if (a == "--throttle" && i + 1 < argc) throttleKBps = std::atof(argv[++i]);
         else if (a == "--throttle-until" && i + 1 < argc) throttleUntil = std::atof(argv[++i]);
         else if (a == "--ack-delay" && i + 1 < argc) ackDelayMs = std::atof(argv[++i]);
+        else if (a == "--stall-at" && i + 1 < argc) stallAt = std::atof(argv[++i]);
+        else if (a == "--stall-for" && i + 1 < argc) stallFor = std::atof(argv[++i]);
         else if (a == "--continuous") continuous = true;
         else if (a == "--verify") verify = true;
         else if (a == "--h264") wantH264 = true;
@@ -128,6 +138,8 @@ int main(int argc, char** argv) {
         Io io;
         io.throttleBps = throttleKBps * 1024;
         io.throttleUntilSec = throttleUntil;
+        io.stallAtSec = stallAt;
+        io.stallForSec = stallFor;
         io.s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         sockaddr_in sa{};
         sa.sin_family = AF_INET;
@@ -395,6 +407,15 @@ int main(int argc, char** argv) {
                 size_t n = len < 0 ? static_cast<size_t>(-static_cast<int64_t>(len)) : static_cast<size_t>(len);
                 std::vector<uint8_t> skip(n);
                 if (n) io.readExact(skip.data(), n);
+                if (len < 0 && n >= 4) {  // extended clipboard message: print when a notify arrives (used by the clipboard stall test)
+                    const uint32_t cf = static_cast<uint32_t>(skip[0]) << 24 | skip[1] << 16 | skip[2] << 8 | skip[3];
+                    if (cf & (1u << 27)) {
+                        FILETIME ft;
+                        GetSystemTimePreciseAsFileTime(&ft);
+                        ULARGE_INTEGER u{{ft.dwLowDateTime, ft.dwHighDateTime}};
+                        std::printf("client: clipboard notify received at wall %.1f\n", static_cast<double>(u.QuadPart) / 10000.0);
+                    }
+                }
             } else if (type == 1) {  // SetColourMapEntries
                 io.u8();
                 const int first = io.u16(), n = io.u16();

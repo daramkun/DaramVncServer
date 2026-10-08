@@ -23,12 +23,12 @@ std::wstring utf8ToWide(const std::string& s) {
 
 struct ClipboardWndProc {
     static LRESULT CALLBACK proc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
-        if (msg == WM_CLIPBOARDUPDATE) {
+        if (msg == WM_CLIPBOARDUPDATE || msg == WM_APP + 1) {
             ClipboardMonitor& cm = ClipboardMonitor::instance();
             std::vector<std::function<void()>> cbs;
             {
                 std::lock_guard<std::mutex> lk(cm.m_);
-                if (GetClipboardSequenceNumber() == cm.ignoreSeq_) return 0;  // our own write
+                if (msg == WM_CLIPBOARDUPDATE && GetClipboardSequenceNumber() == cm.ignoreSeq_) return 0;  // our own write
                 for (auto& l : cm.listeners_) cbs.push_back(l.second);
             }
             for (auto& cb : cbs) cb();
@@ -63,6 +63,10 @@ void ClipboardMonitor::threadMain() {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+}
+
+void ClipboardMonitor::simulateChange() {
+    if (hwnd_) PostMessageW(static_cast<HWND>(hwnd_), WM_APP + 1, 0, 0);
 }
 
 int ClipboardMonitor::addListener(std::function<void()> cb) {

@@ -48,3 +48,6 @@ target_link_libraries(bench_encode PRIVATE daramcore)
 
 add_executable(bench_jpeg tools/bench_jpeg.cpp)
 target_link_libraries(bench_jpeg PRIVATE daramcore)
+
+add_executable(clip_poke tools/clip_poke.cpp)
+target_link_libraries(clip_poke PRIVATE user32)

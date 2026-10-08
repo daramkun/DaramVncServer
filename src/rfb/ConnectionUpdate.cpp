@@ -15,6 +15,7 @@ namespace {
 
 constexpr int kMaxOutstandingFences = 16;  // the byte budget below is the real limit; this only bounds bookkeeping
 constexpr auto kProbeInterval = seconds(4);
+constexpr auto kStallAfter = milliseconds(1000);  // no fence answer for this long from a client that normally answers: it is stuck
 constexpr auto kRefineDelay = milliseconds(300);
 constexpr size_t kMaxLossyRects = 12;
 
@@ -370,26 +371,42 @@ void Connection::updaterMain() {
         PixelFormat pf;
         unsigned pfGen;
         bool nonIncremental;
+        bool flushClipboard = false, ready = false;
         {
             std::unique_lock<std::mutex> lk(mu_);
             for (;;) {
-                // Forget fences the client never answered so a silent client cannot stall us forever.
                 const auto now = steady_clock::now();
-                for (auto it = fences_.begin(); it != fences_.end();)
-                    it = (now - it->second.sent > seconds(2)) ? fences_.erase(it) : std::next(it);
+                // A client that never answered a fence simply does not use the extension: forget its fences after two
+                // seconds. A client that answered before and has gone quiet is stalled: keep the evidence, and keep it
+                // gated below, so we stop stuffing data into socket buffers it is not reading (a full buffer would
+                // block send() and, with it, everything that needs the send lock).
+                const bool answers = lastFenceResponse_ != steady_clock::time_point{};
+                if (!answers)
+                    for (auto it = fences_.begin(); it != fences_.end();)
+                        it = (now - it->second.sent > seconds(2)) ? fences_.erase(it) : std::next(it);
                 const bool want = requestPending_ || continuous_;
                 // Keep the unanswered data near what the link carries during one round trip plus ~80 ms of queue: enough to
                 // keep a long fat link full, little enough that a queue cannot add latency.
                 size_t inflight = 0;
-                for (const auto& f : fences_) inflight += f.second.bytes;
+                auto oldest = now;
+                for (const auto& f : fences_) {
+                    inflight += f.second.bytes;
+                    oldest = std::min(oldest, f.second.sent);
+                }
                 const double baseSec = baseRttMs_ < 1e8 ? baseRttMs_ / 1000.0 : 0.0;
                 const size_t budget = bandwidth_ > 0 ? std::max<size_t>(96 * 1024, static_cast<size_t>(bandwidth_ * (baseSec + 0.08))) : SIZE_MAX;
                 bool congested = caps_.fence && !fences_.empty() &&
                                  (fences_.size() >= static_cast<size_t>(kMaxOutstandingFences) || inflight >= budget);
                 // A round-trip probe needs an empty pipe: hold back briefly when one is due.
                 if (caps_.fence && !fences_.empty() && (baseRttMs_ >= 1e8 || now - lastProbe_ > kProbeInterval)) congested = true;
+                if (caps_.fence && answers && !fences_.empty() && now - oldest > kStallAfter) congested = true;  // stalled client
                 if (stop_) return;
-                if (want && !congested) break;
+                if (clipboardPending_) {  // sent from here, never from the shared clipboard thread (see onLocalClipboardChanged)
+                    clipboardPending_ = false;
+                    flushClipboard = true;
+                }
+                ready = want && !congested;
+                if (ready || flushClipboard) break;
                 cv_.wait_for(lk, milliseconds(250));
             }
             caps = caps_;
@@ -397,6 +414,11 @@ void Connection::updaterMain() {
             pfGen = pfGeneration_;
             nonIncremental = requestPending_ && !requestIncremental_;
         }
+        if (flushClipboard) {
+            flushClipboardNotify();
+            if (!ready) continue;
+        }
+
         const UpdateResult r = sendUpdate(nonIncremental, caps, pf, pfGen);
         if (r == UpdateResult::Error) {
             dead_ = true;

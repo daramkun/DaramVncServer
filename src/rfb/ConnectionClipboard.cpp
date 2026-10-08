@@ -77,13 +77,24 @@ bool Connection::sendLegacyCutText(const std::wstring& text) {
     return send(m);
 }
 
+// Runs on the process-wide clipboard thread, which serves every connection one after the other. If it sent here, a
+// client that stopped reading (send() blocked while holding the send lock) would hold up everybody's notifications,
+// so it only raises a flag and wakes this connection's own updater thread.
 void Connection::onLocalClipboardChanged() {
+    if (dead_) return;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        clipboardPending_ = true;
+    }
+    cv_.notify_all();
+}
+
+void Connection::flushClipboardNotify() {
     bool extended;
     {
         std::lock_guard<std::mutex> lk(clipMu_);
         extended = clipExtended_;
     }
-    if (dead_) return;
     if (extended) {
         sendClipboardNotify();
     } else {

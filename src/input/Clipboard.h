@@ -19,6 +19,10 @@ public:
     // Writes text and suppresses the change notification it would cause.
     bool setText(const std::wstring& text);
 
+    // Test aid: runs the change listeners on the monitor thread exactly as a real clipboard update would,
+    // without touching the user's clipboard.
+    void simulateChange();
+
 private:
     ClipboardMonitor();
     void threadMain();

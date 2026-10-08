@@ -5,7 +5,10 @@
 #include <iostream>
 #include <string>
 
+#include <thread>
+
 #include "config/Config.h"
+#include "input/Clipboard.h"
 #include "rfb/Server.h"
 #include "security/Auth.h"
 #include "service/Service.h"
@@ -54,7 +57,7 @@ std::string readNewPassword() {
     return a;
 }
 
-int runServer(ServerConfig cfg, bool agent) {
+int runServer(ServerConfig cfg, bool agent, int clipPingSec = 0) {
     if (agent) {
         logging::setLogFile(cfg.logFile.empty() ? exeDirectory() + "\\daramvnc.log" : cfg.logFile);
     }
@@ -65,6 +68,18 @@ int runServer(ServerConfig cfg, bool agent) {
     if (!server.start(&err)) {
         LOGI("cannot start: %s", err.c_str());
         return 1;
+    }
+    if (clipPingSec > 0) {  // debugging aid for the clipboard-stall test: pretend the clipboard changed
+        std::thread([clipPingSec] {
+            for (;;) {
+                Sleep(static_cast<DWORD>(clipPingSec) * 1000);
+                FILETIME ft;
+                GetSystemTimePreciseAsFileTime(&ft);
+                ULARGE_INTEGER u{{ft.dwLowDateTime, ft.dwHighDateTime}};
+                std::fprintf(stderr, "debug: simulated clipboard change at wall %.1f\n", static_cast<double>(u.QuadPart) / 10000.0);
+                ClipboardMonitor::instance().simulateChange();
+            }
+        }).detach();
     }
     if (agent) {
         Sleep(INFINITE);  // the service terminates us
@@ -90,7 +105,7 @@ int main(int argc, char** argv) {
     ServerConfig cfg;
     std::string portArg, bindArg;
     bool openFirewall = false, viewOnlyArg = false, h264Arg = false;
-    int jpegMaxArg = 0, jpegMinArg = 0;
+    int jpegMaxArg = 0, jpegMinArg = 0, clipPingSec = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
         if (a == "--config" && i + 1 < argc) configPath = argv[++i];
@@ -99,6 +114,7 @@ int main(int argc, char** argv) {
         else if (a == "--open-firewall") openFirewall = true;
         else if (a == "--view-only") viewOnlyArg = true;
         else if (a == "--h264") h264Arg = true;
+        else if (a == "--debug-clipboard-ping" && i + 1 < argc) clipPingSec = std::atoi(argv[++i]);
         else if (a == "--jpeg-max" && i + 1 < argc) jpegMaxArg = std::atoi(argv[++i]);
         else if (a == "--jpeg-min" && i + 1 < argc) jpegMinArg = std::atoi(argv[++i]);
     }
@@ -156,7 +172,7 @@ int main(int argc, char** argv) {
         return err ? 1 : 0;
     }
     if (cmd == "agent") return runServer(cfg, true);
-    if (cmd == "run" || cmd[0] == '-') return runServer(cfg, false);
+    if (cmd == "run" || cmd[0] == '-') return runServer(cfg, false, clipPingSec);
 
     std::fputs(kUsage, stderr);
     return 2;

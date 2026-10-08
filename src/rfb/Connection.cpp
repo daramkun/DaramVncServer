@@ -83,8 +83,17 @@ void Connection::stop() {
 }
 
 bool Connection::send(const std::vector<uint8_t>& data) {
+    const auto t0 = std::chrono::steady_clock::now();
     std::lock_guard<std::mutex> lk(sendMu_);
-    if (!tp_->writeAll(data.data(), data.size())) {
+    const auto t1 = std::chrono::steady_clock::now();
+    const bool ok = tp_->writeAll(data.data(), data.size());
+    const auto t2 = std::chrono::steady_clock::now();
+    const double waitMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    const double writeMs = std::chrono::duration<double, std::milli>(t2 - t1).count();
+    if (waitMs > 200 || writeMs > 200)  // a client that does not read: this is where it shows up
+        LOGI("%s: slow send of %zu bytes: waited %.0f ms for the send lock, write took %.0f ms%s", peer_.c_str(), data.size(), waitMs, writeMs,
+             ok ? "" : " (failed)");
+    if (!ok) {
         dead_ = true;
         tp_->shutdown();
         return false;
