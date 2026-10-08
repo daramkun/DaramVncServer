@@ -140,12 +140,21 @@ int main(int argc, char** argv) {
         io.throttleUntilSec = throttleUntil;
         io.stallAtSec = stallAt;
         io.stallForSec = stallFor;
-        io.s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-        sockaddr_in sa{};
-        sa.sin_family = AF_INET;
-        sa.sin_port = htons(static_cast<u_short>(port));
-        inet_pton(AF_INET, host.c_str(), &sa.sin_addr);
-        if (connect(io.s, reinterpret_cast<sockaddr*>(&sa), sizeof sa) != 0) throw std::runtime_error("connect failed");
+        {   // IPv4 or IPv6, whatever the host name / literal resolves to
+            addrinfo hints{};
+            hints.ai_family = AF_UNSPEC;
+            hints.ai_socktype = SOCK_STREAM;
+            addrinfo* res = nullptr;
+            if (getaddrinfo(host.c_str(), std::to_string(port).c_str(), &hints, &res) != 0 || !res) throw std::runtime_error("cannot resolve " + host);
+            for (addrinfo* ai = res; ai; ai = ai->ai_next) {
+                io.s = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+                if (io.s != INVALID_SOCKET && connect(io.s, ai->ai_addr, static_cast<int>(ai->ai_addrlen)) == 0) break;
+                if (io.s != INVALID_SOCKET) closesocket(io.s);
+                io.s = INVALID_SOCKET;
+            }
+            freeaddrinfo(res);
+            if (io.s == INVALID_SOCKET) throw std::runtime_error("connect failed");
+        }
         BOOL nd = TRUE;
         setsockopt(io.s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&nd), sizeof nd);
 

@@ -22,7 +22,7 @@ struct ServerConfig {
     std::string logFile;
 
     bool hasCredentials() const { return !passwordHash.empty() || !vncPasswordProtected.empty(); }
-    bool isLoopbackOnly() const { return bind == "127.0.0.1" || bind == "::1" || bind == "localhost"; }
+    bool isLoopbackOnly() const { return bind == "::1" || bind == "localhost" || bind.rfind("127.", 0) == 0; }
 };
 
 // Directory holding the executable (config, certificate and log live here by default).
