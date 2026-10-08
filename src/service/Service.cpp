@@ -132,7 +132,9 @@ void WINAPI serviceMain(DWORD, LPWSTR*) {
     g_wakeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     ServerConfig cfg;
     loadConfig(defaultConfigPath(), cfg);
-    logging::setLogFile(cfg.logFile.empty() ? exeDirectory() + "\\daramvnc.log" : cfg.logFile);
+    logging::setLogFile(cfg.logFile.empty() ? exeDirectory() + "\\daramvnc.log" : cfg.logFile,
+                        static_cast<size_t>(cfg.logMaxMb) * 1024 * 1024, cfg.logKeep);
+    logging::setConsoleOutput(false);
     report(SERVICE_RUNNING);
     supervise();
     report(SERVICE_STOPPED);

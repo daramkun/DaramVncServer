@@ -1,5 +1,7 @@
 // Encoder round-trip tests against the independent reference decoders in RefDecoders.h.
 #include <cmath>
+#include <fstream>
+#include <iterator>
 #include <cstdio>
 #include <random>
 
@@ -12,6 +14,7 @@
 #include "config/Config.h"
 #include "encode/QualityController.h"
 #include "security/Auth.h"
+#include "util/Log.h"
 
 using namespace rfbenc;
 using ref::Image;
@@ -339,6 +342,61 @@ void testQualityController() {
     CHECK(h.update(t + 400, -1, 55, 55) == 55);
 }
 
+void testLogRotation() {
+    std::puts("log: size-based rotation keeps disk use bounded and the newest lines");
+    char tmp[MAX_PATH];
+    GetTempPathA(MAX_PATH, tmp);
+    const std::string path = std::string(tmp) + "daramvnc_logtest.log";
+    auto size = [](const std::string& p) -> long long {
+        WIN32_FILE_ATTRIBUTE_DATA d;
+        if (!GetFileAttributesExA(p.c_str(), GetFileExInfoStandard, &d)) return -1;
+        return (static_cast<long long>(d.nFileSizeHigh) << 32) | d.nFileSizeLow;
+    };
+    auto cleanup = [&] { for (const char* suffix : {"", ".1", ".2", ".3", ".4"}) DeleteFileA((path + suffix).c_str()); };
+    cleanup();
+
+    logging::setConsoleOutput(false);  // keep the test output readable
+    logging::setLogFile(path, 3000, 2);
+    for (int i = 0; i < 300; ++i) LOGI("rotation test line %03d with some padding to give it a realistic length", i);
+    logging::setLogFile("");  // close
+    logging::setConsoleOutput(true);
+
+    CHECK(size(path) > 0 && size(path) <= 3000 + 200);
+    CHECK(size(path + ".1") > 0 && size(path + ".1") <= 3000 + 200);
+    CHECK(size(path + ".2") > 0);
+    CHECK(size(path + ".3") == -1);  // keep = 2: nothing older is retained
+    // The newest line must be in the live file, and the oldest lines must be gone.
+    std::ifstream in(path);
+    std::string all((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    CHECK(all.find("rotation test line 299") != std::string::npos);
+    std::ifstream oldest(path + ".2");
+    std::string oldText((std::istreambuf_iterator<char>(oldest)), std::istreambuf_iterator<char>());
+    CHECK(oldText.find("rotation test line 000") == std::string::npos);
+
+    // Note: `in` and `oldest` above are still open on purpose. Rotation must also work while some reader (tail, an
+    // editor) holds the log open without allowing it to be renamed.
+    // Reopening an existing log continues its size accounting instead of starting from zero.
+    logging::setConsoleOutput(false);
+    logging::setLogFile(path, 3000, 2);
+    const long long before = size(path);
+    for (int i = 0; i < 100; ++i) LOGI("more lines after reopening, line %03d, padding padding padding", i);
+    logging::setLogFile("");
+    logging::setConsoleOutput(true);
+    CHECK(before > 0 && size(path) <= 3000 + 200);
+    CHECK(size(path + ".3") == -1);
+
+    // keep = 0: no history at all, just a bounded file.
+    cleanup();
+    logging::setConsoleOutput(false);
+    logging::setLogFile(path, 2000, 0);
+    for (int i = 0; i < 200; ++i) LOGI("no history line %03d with padding padding padding padding", i);
+    logging::setLogFile("");
+    logging::setConsoleOutput(true);
+    CHECK(size(path) > 0 && size(path) <= 2000 + 200);
+    CHECK(size(path + ".1") == -1);
+    cleanup();
+}
+
 void testConfigNormalize() {
     std::puts("config: jpeg quality limits are normalised");
     ServerConfig c;
@@ -349,6 +407,11 @@ void testConfigNormalize() {
     c.jpegQualityMax = 30; c.jpegQualityMin = 70;
     normalizeConfig(c);
     CHECK(c.jpegQualityMin == 30 && c.jpegQualityMax == 30);  // min can never exceed max
+    ServerConfig d;
+    CHECK(d.logMaxMb == 5 && d.logKeep == 3);  // documented log rotation defaults
+    d.logMaxMb = -4; d.logKeep = 900;
+    normalizeConfig(d);
+    CHECK(d.logMaxMb == 0 && d.logKeep == 50);
 }
 
 void testPixelFormatValidation() {
@@ -404,6 +467,7 @@ int main() {
     testH264();
     testQualityController();
     testConfigNormalize();
+    testLogRotation();
     testPixelFormatValidation();
     testAuth();
 

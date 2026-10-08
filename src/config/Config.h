@@ -20,6 +20,7 @@ struct ServerConfig {
     bool allowLegacyVncAuth = false;  // offer RFB "VNC Authentication" (DES challenge) when a VNC password is set
     std::string certFile, keyFile;    // PEM; generated on first start when missing
     std::string logFile;
+    int logMaxMb = 5, logKeep = 3;  // size-based rotation of the log file (logMaxMb = 0: never rotate)
 
     bool hasCredentials() const { return !passwordHash.empty() || !vncPasswordProtected.empty(); }
     bool isLoopbackOnly() const { return bind == "::1" || bind == "localhost" || bind.rfind("127.", 0) == 0; }

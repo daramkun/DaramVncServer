@@ -26,6 +26,8 @@ void normalizeConfig(ServerConfig& cfg) {
     cfg.jpegQualityMax = std::clamp(cfg.jpegQualityMax, 1, 99);
     cfg.jpegQualityMin = std::clamp(cfg.jpegQualityMin, 1, 99);
     if (cfg.jpegQualityMin > cfg.jpegQualityMax) cfg.jpegQualityMin = cfg.jpegQualityMax;
+    cfg.logMaxMb = std::clamp(cfg.logMaxMb, 0, 10240);
+    cfg.logKeep = std::clamp(cfg.logKeep, 0, 50);
 }
 
 std::string exeDirectory() {
@@ -61,6 +63,8 @@ bool loadConfig(const std::string& path, ServerConfig& cfg) {
         else if (k == "cert") cfg.certFile = v;
         else if (k == "key") cfg.keyFile = v;
         else if (k == "log") cfg.logFile = v;
+        else if (k == "log_max_mb") cfg.logMaxMb = std::atoi(v.c_str());
+        else if (k == "log_keep") cfg.logKeep = std::atoi(v.c_str());
     }
     const std::string dir = exeDirectory();
     if (cfg.certFile.empty()) cfg.certFile = dir + "\\server.crt";

@@ -58,8 +58,12 @@ std::string readNewPassword() {
 }
 
 int runServer(ServerConfig cfg, bool agent, int clipPingSec = 0) {
+    const size_t logMaxBytes = static_cast<size_t>(cfg.logMaxMb) * 1024 * 1024;
     if (agent) {
-        logging::setLogFile(cfg.logFile.empty() ? exeDirectory() + "\\daramvnc.log" : cfg.logFile);
+        logging::setLogFile(cfg.logFile.empty() ? exeDirectory() + "\\daramvnc.log" : cfg.logFile, logMaxBytes, cfg.logKeep);
+        logging::setConsoleOutput(false);  // an agent started by the service has no console
+    } else if (!cfg.logFile.empty()) {  // foreground run with an explicit log file: log to the console as well
+        logging::setLogFile(cfg.logFile, logMaxBytes, cfg.logKeep);
     }
     // Pixel coordinates must match what capture and input use, on any DPI setting.
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);

@@ -28,6 +28,7 @@ daramvnc install [--open-firewall]   서비스 설치 (관리자)    daramvnc st
 
 - 인증 정보가 없으면 **127.0.0.1에서만** 수신하고 `bind`를 바꾸면 시작을 거부합니다.
 - 원격 접속: `daramvnc passwd me` 후 `bind`를 지정합니다. `bind=0.0.0.0`은 IPv4만, **`bind=::`은 IPv4와 IPv6 모두(듀얼스택)**, `bind=::1`은 IPv6 루프백만 받습니다. 뷰어에서 **VeNCrypt(X509Plain, TLS)** 로 접속합니다. 첫 실행 시 자체 서명 인증서(`server.crt/key`)를 만듭니다. 잘못된 주소는 시작할 때 `invalid bind address`로 알려 줍니다.
+- 로그: 서비스/에이전트는 실행 파일 옆 `daramvnc.log`에 기록하며 **크기 기준으로 회전**합니다(`log_max_mb`=5, `log_keep`=3: 5MB가 되면 `daramvnc.log.1`, `.2`, `.3`으로 밀리고 가장 오래된 것이 삭제됩니다. `log_max_mb=0`이면 회전하지 않음, `log_keep=0`이면 이전 파일을 남기지 않음). `log=경로`로 위치를 바꿀 수 있습니다.
 - 서비스 모드는 활성 콘솔 세션에 SYSTEM 권한 에이전트를 띄워 로그인 화면·UAC(보안 데스크톱)를 따라갑니다.
 
 ## JPEG 품질 설정
