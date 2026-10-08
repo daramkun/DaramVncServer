@@ -1,0 +1,13 @@
+# build output and dependencies
+build/
+vcpkg_installed/
+out/
+*.obj
+*.pdb
+
+# local runtime state: credentials, certificates, logs
+daramvnc.conf
+*.crt
+*.key
+*.pem
+*.log

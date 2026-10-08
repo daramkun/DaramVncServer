@@ -1,0 +1,9 @@
+{
+  "name": "daramvncserver",
+  "version": "0.1.0",
+  "dependencies": [
+    "zlib",
+    { "name": "libjpeg-turbo", "features": [] },
+    "openssl"
+  ]
+}
