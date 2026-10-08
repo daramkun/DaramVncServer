@@ -51,3 +51,6 @@ target_link_libraries(bench_jpeg PRIVATE daramcore)
 
 add_executable(clip_poke tools/clip_poke.cpp)
 target_link_libraries(clip_poke PRIVATE user32)
+
+add_executable(inputsink tools/inputsink.cpp)
+target_link_libraries(inputsink PRIVATE user32)

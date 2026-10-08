@@ -11,6 +11,7 @@ call "...\VC\Auxiliary\Build\vcvars64.bat"
 cmake --preset release        :: 처음 한 번 vcpkg가 zlib, libjpeg-turbo, OpenSSL을 빌드합니다
 cmake --build build
 build\daramvnc_tests.exe      :: 인코더/인증 단위 테스트
+python tests\input_test.py build :: 키보드/마우스 주입을 실제 SendInput으로 검증 (아래 참고)
 ```
 
 산출물: `daramvnc.exe`(서버), `daramvnc_tests.exe`, `daramvnc_client.exe`(통합 테스트/벤치마크 클라이언트), `animwin.exe`(부하용 애니메이션 창).
@@ -62,6 +63,12 @@ daramvnc install [--open-firewall]   서비스 설치 (관리자)    daramvnc st
 - **다른 클라이언트에 영향 없음**: 캡처는 허브의 공유 스레드, 인코딩은 연결별 스레드라서 한 클라이언트의 `send`가 막혀도 다른 클라이언트의 프레임레이트는 그대로입니다(79 업데이트/s 유지 확인).
 - **클립보드 알림**: 모든 연결이 공유하는 클립보드 스레드에서 직접 `send`하면 멈춘 클라이언트 하나가 모두의 알림을 막습니다(실측 9.7초 지연). 지금은 각 연결의 갱신 스레드가 보냅니다(지연 0 ms 확인).
 - **남은 한계**: 멈춘 클라이언트 자신의 송신 락은 멈춤이 끝날 때까지 잡혀 있어서 그 연결의 입력 처리(읽기 스레드의 Fence 응답)가 같이 지연됩니다. Fence를 지원하지 않는 클라이언트는 위의 1초 감지가 적용되지 않고 30초 타임아웃에만 의존합니다.
+
+## 입력 주입 테스트
+
+`python tests/input_test.py build`는 스크립트된 RFB 키/포인터 이벤트(일반 KeyEvent와 QEMU 확장 키)를 서버에 보내고, 서버가 `SendInput`으로 실제로 만든 이벤트를 `tools/inputsink.exe`의 저수준 훅(`WH_KEYBOARD_LL`/`WH_MOUSE_LL`)으로 받아 기대값과 비교합니다. 훅은 *주입된* 이벤트만 기록하고 삼키므로 어떤 창에도 입력이 전달되지 않고 실제 커서도 움직이지 않으며, 사용자가 직접 치는 키와 마우스는 그대로 통과합니다(테스트 중 약 15초).
+
+검증 내용: 문자, Shift/Ctrl/Alt 조합, `Ctrl+C`(단축키 경로), 한글 같은 유니코드 문자, 확장 키(방향키·Delete·Home·Insert), 키패드, 자동 반복, 마우스 이동·버튼·휠 4방향, 범위를 벗어난 좌표의 화면 안 클램프, 연결이 끊길 때 눌려 있던 키와 버튼의 해제, QEMU 스캔코드 경로.
 
 ## 구현된 표준 / 확장
 

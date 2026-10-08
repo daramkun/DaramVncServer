@@ -101,6 +101,7 @@ int main(int argc, char** argv) {
     std::string host = "127.0.0.1", user, pass, vncPass, enc = "tight", pfName = "native";
     int port = 5900, seconds = 5, quality = 8;
     double throttleKBps = 0, throttleUntil = 0, ackDelayMs = 0, stallAt = 0, stallFor = 0;
+    std::string inputTest;  // "std" or "ext": send a scripted keyboard/mouse sequence (see tests/input_test.py)
     bool continuous = false, verify = false, wantCursor = true, qemuKey = false, wantH264 = false;
     int rx = 0, ry = 0, rw = -1, rh = -1, resizeW = 0, resizeH = 0;
     int positional = 0;
@@ -116,6 +117,7 @@ int main(int argc, char** argv) {
         else if (a == "--throttle" && i + 1 < argc) throttleKBps = std::atof(argv[++i]);
         else if (a == "--throttle-until" && i + 1 < argc) throttleUntil = std::atof(argv[++i]);
         else if (a == "--ack-delay" && i + 1 < argc) ackDelayMs = std::atof(argv[++i]);
+        else if (a == "--input-test" && i + 1 < argc) inputTest = argv[++i];
         else if (a == "--stall-at" && i + 1 < argc) stallAt = std::atof(argv[++i]);
         else if (a == "--stall-for" && i + 1 < argc) stallFor = std::atof(argv[++i]);
         else if (a == "--continuous") continuous = true;
@@ -241,6 +243,66 @@ int main(int argc, char** argv) {
             std::vector<uint8_t> r{3, static_cast<uint8_t>(inc)};
             put16(r, static_cast<uint16_t>(rx)); put16(r, static_cast<uint16_t>(ry)); put16(r, static_cast<uint16_t>(rw)); put16(r, static_cast<uint16_t>(rh));
             io.writeAll(r.data(), r.size());
+        };
+
+        // ---- scripted input for the injector test: only meaningful against a server that is NOT view-only ----
+        bool inputTestSent = false;
+        auto sendKey = [&](bool down, uint32_t keysym) {
+            std::vector<uint8_t> r{4, static_cast<uint8_t>(down ? 1 : 0), 0, 0};
+            put32(r, keysym);
+            io.writeAll(r.data(), r.size());
+            Sleep(8);
+        };
+        auto sendExtKey = [&](bool down, uint32_t keysym, uint32_t keycode) {
+            std::vector<uint8_t> r{255, 0};
+            put16(r, static_cast<uint16_t>(down ? 1 : 0));
+            put32(r, keysym);
+            put32(r, keycode);
+            io.writeAll(r.data(), r.size());
+            Sleep(8);
+        };
+        auto sendPointer = [&](uint8_t mask, int px, int py) {
+            std::vector<uint8_t> r{5, mask};
+            put16(r, static_cast<uint16_t>(px));
+            put16(r, static_cast<uint16_t>(py));
+            io.writeAll(r.data(), r.size());
+            Sleep(8);
+        };
+        auto tap = [&](uint32_t keysym) { sendKey(true, keysym); sendKey(false, keysym); };
+        auto runInputTest = [&](const std::string& mode) {
+            if (mode == "std") {
+                tap(0x61);                                                           // a
+                sendKey(true, 0xFFE1); tap(0x41); sendKey(false, 0xFFE1);            // Shift + A
+                tap(0x31);                                                           // 1
+                tap(0x01000000 + 0xD55C);                                            // a Hangul syllable (Unicode path)
+                sendKey(true, 0xFFE3); tap(0x63); sendKey(false, 0xFFE3);            // Ctrl + C (shortcut path)
+                for (uint32_t ks : {0xFF0Du, 0xFF51u, 0xFFFFu, 0xFFC2u, 0xFFB5u, 0xFF50u, 0xFF63u}) tap(ks);  // Enter Left Delete F5 KP5 Home Insert
+                sendKey(true, 0xFFE9); tap(0xFF09); sendKey(false, 0xFFE9);          // Alt + Tab
+                sendKey(true, 0xFFE1); tap(0x40); sendKey(false, 0xFFE1);            // Shift + @
+                sendKey(true, 0x78); sendKey(true, 0x78); sendKey(true, 0x78); sendKey(false, 0x78);  // auto-repeat of x
+                sendPointer(0, 100, 200);
+                sendPointer(0, 500, 300);
+                sendPointer(1, 500, 300); sendPointer(0, 500, 300);                  // left click
+                sendPointer(4, 500, 300); sendPointer(0, 500, 300);                  // right click
+                sendPointer(2, 500, 300); sendPointer(0, 500, 300);                  // middle click
+                sendPointer(8, 500, 300); sendPointer(0, 500, 300);                  // wheel up
+                sendPointer(16, 500, 300); sendPointer(0, 500, 300);                 // wheel down
+                sendPointer(32, 500, 300); sendPointer(0, 500, 300);                 // wheel left
+                sendPointer(64, 500, 300); sendPointer(0, 500, 300);                 // wheel right
+                sendPointer(0, 100000, 100000);                                      // far outside: must be clamped to the screen
+                // Leave things held down and disconnect: the server must release them.
+                sendKey(true, 0xFFE3); sendKey(true, 0x71); sendPointer(1, 10, 10);
+            } else {
+                sendExtKey(true, 0x61, 0x1E); sendExtKey(false, 0x61, 0x1E);                   // a: printable, keysym path
+                sendExtKey(true, 0xFFE3, 0x1D);                                                // Ctrl
+                sendExtKey(true, 0x63, 0x2E); sendExtKey(false, 0x63, 0x2E);                   // Ctrl+C by scancode
+                sendExtKey(false, 0xFFE3, 0x1D);
+                sendExtKey(true, 0xFF51, 0xCB); sendExtKey(false, 0xFF51, 0xCB);               // Left arrow: E0 4B
+                sendExtKey(true, 0x01000000 + 0xD55C, 0); sendExtKey(false, 0x01000000 + 0xD55C, 0);  // Hangul, no scancode
+                sendExtKey(true, 0xFFE1, 0x2A); sendExtKey(true, 0x41, 0x1E); sendExtKey(false, 0x41, 0x1E); sendExtKey(false, 0xFFE1, 0x2A);  // Shift + A
+                sendExtKey(true, 0xFFE3, 0x1D); sendExtKey(true, 0x71, 0x10);                  // Ctrl and q held, then disconnect
+            }
+            std::puts("client: input sequence sent");
         };
 
         Image fb(W, H);
@@ -376,6 +438,11 @@ int main(int argc, char** argv) {
                         io.writeAll(r.data(), r.size());
                     }
                     qemuKeysSent = true;
+                }
+                if (!inputTest.empty() && !inputTestSent && updates >= 3) {
+                    inputTestSent = true;
+                    runInputTest(inputTest);
+                    return 0;  // closing the connection right away is part of the test (held keys must be released)
                 }
                 if (resizeW > 0 && !resizeSent && updates >= 3) {
                     std::vector<uint8_t> r{251, 0};
