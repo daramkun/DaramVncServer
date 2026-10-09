@@ -95,7 +95,20 @@ python scripts\regression.py --skip-input   :: 전체 회귀 검증 (약 40초)
 - 입력 주입 테스트는 약 35초 동안 시스템 전체 입력 훅을 겁니다. 주입된 이벤트만 삼키므로 직접 치는 키와 마우스는 그대로 통과합니다.
 - 화면과 비교하는 검사는 캡처 도중에도 화면이 바뀌므로 약간의 차이(기본 3 %)를 허용합니다. 화면에서 동영상이 재생되는 중이면 실패할 수 있습니다.
 
-## 6. 문제 해결
+## 6. 버전과 자동 릴리스
+
+버전은 `<주>.<부>.<빌드 번호>` 형식이고 `daramvnc.exe version`으로 확인합니다(서버를 시작할 때 로그 첫 줄에도 나옵니다). 주·부 버전은 `CMakeLists.txt`의 `DARAM_VERSION_BASE`(현재 `0.1`)에서 바꾸고, 빌드 번호는 환경 변수 `DARAM_BUILD_NUMBER`로 넣습니다. 로컬 빌드는 번호가 `0`입니다.
+
+`main` 브랜치에 푸시할 때마다 GitHub Actions(`.github/workflows/release.yml`)가 다음을 합니다.
+
+1. `scripts\build.bat`로 빌드합니다. 빌드 번호는 워크플로 실행 번호(`github.run_number`)이며 푸시할 때마다 1씩 오르고 줄어들지 않습니다.
+2. `daramvnc_tests.exe`를 실행합니다. 실패하면 릴리스를 만들지 않습니다.
+3. `DaramVncServer-<버전>-win-x64.zip`(서버, README, 매뉴얼)과 SHA-256 파일을 만듭니다.
+4. 태그 `v<버전>`으로 GitHub Release를 만들고 위 파일을 올립니다.
+
+첫 실행은 vcpkg가 OpenSSL 등을 빌드해서 오래 걸리고(수십 분일 수 있음), 이후에는 캐시를 씁니다. 수동으로 돌리려면 Actions 탭의 "Build and release"에서 Run workflow를 누르세요.
+
+## 7. 문제 해결
 
 | 증상 | 원인과 해결 |
 |---|---|
@@ -108,7 +121,7 @@ python scripts\regression.py --skip-input   :: 전체 회귀 검증 (약 40초)
 | 재빌드 시 `daramvnc.exe`에 쓸 수 없음 | 서버가 실행 중입니다. 종료(`Enter` 또는 `daramvnc stop`) 후 다시 빌드하세요 |
 | 검증 스크립트가 `common`을 못 찾음 | `python -I`로 실행했습니다. `-I` 없이 `python scripts\x.py`로 실행하세요 |
 
-## 7. 소스 구조
+## 8. 소스 구조
 
 ```
 src/

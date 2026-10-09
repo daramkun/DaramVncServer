@@ -24,6 +24,7 @@ const char* kUsage =
     "       daramvnc vncpasswd            set an optional VNC password (X509Vnc over TLS; legacy VNC auth if enabled)\n"
     "       daramvnc install [--open-firewall]   install and start the Windows service (Administrator)\n"
     "       daramvnc uninstall | start | stop    manage the service (Administrator)\n"
+    "       daramvnc version              print the version (<major>.<minor>.<build number>)\n"
     "\n"
     "Settings live in daramvnc.conf next to the executable (bind, port, user, password_hash, ...).\n"
     "The server listens on 0.0.0.0 by default and refuses to start until credentials are set (daramvnc passwd);\n"
@@ -68,6 +69,7 @@ int runServer(ServerConfig cfg, bool agent, int clipPingSec = 0) {
     }
     // Pixel coordinates must match what capture and input use, on any DPI setting.
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    LOGI("DaramVncServer %s", DARAM_VERSION);
     Server server(cfg);
     std::string err;
     if (!server.start(&err)) {
@@ -103,6 +105,11 @@ int main(int argc, char** argv) {
     std::string cmd = argc > 1 ? argv[1] : "run";
     if (cmd == "-h" || cmd == "--help" || cmd == "help") {
         std::fputs(kUsage, stdout);
+        return 0;
+    }
+
+    if (cmd == "-v" || cmd == "--version" || cmd == "version") {
+        std::printf("DaramVncServer %s\n", DARAM_VERSION);
         return 0;
     }
 

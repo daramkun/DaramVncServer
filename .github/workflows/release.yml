@@ -1,0 +1,70 @@
+name: Build and release
+
+# Every push to main is built and published as a GitHub Release.
+# Build number = the workflow run number, which only ever goes up (version 0.1.<run number>, tag v0.1.<run number>).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # create the tag and the release
+
+concurrency:
+  group: release
+  cancel-in-progress: false  # never cancel a build that is about to publish; later pushes queue up
+
+env:
+  DARAM_BUILD_NUMBER: ${{ github.run_number }}
+  VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\.vcpkg-cache
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      # The first build compiles OpenSSL & co. through vcpkg (many minutes); the cache makes later builds fast.
+      - name: Restore the vcpkg binary cache
+        uses: actions/cache@v4
+        with:
+          path: .vcpkg-cache
+          key: vcpkg-${{ runner.os }}-${{ hashFiles('vcpkg.json', 'CMakePresets.json') }}
+          restore-keys: vcpkg-${{ runner.os }}-
+
+      - name: Build
+        shell: cmd
+        run: |
+          if not exist .vcpkg-cache mkdir .vcpkg-cache
+          call scripts\build.bat
+
+      - name: Unit tests
+        shell: cmd
+        run: build\daramvnc_tests.exe
+
+      - name: Package
+        id: pkg
+        shell: pwsh
+        run: |
+          $version = ((& build\daramvnc.exe version) -split ' ')[1]
+          if ($version -ne "0.1.$env:DARAM_BUILD_NUMBER") { throw "unexpected version '$version'" }
+          $name = "DaramVncServer-$version-win-x64"
+          New-Item -ItemType Directory -Force "dist\$name" | Out-Null
+          Copy-Item build\daramvnc.exe, README.md "dist\$name"
+          Copy-Item docs "dist\$name\docs" -Recurse
+          Compress-Archive -Path "dist\$name\*" -DestinationPath "dist\$name.zip"
+          (Get-FileHash "dist\$name.zip" -Algorithm SHA256).Hash.ToLower() + "  $name.zip" | Set-Content "dist\$name.zip.sha256"
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "name=$name" >> $env:GITHUB_OUTPUT
+
+      - name: Publish the release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${{ steps.pkg.outputs.version }}" `
+            "dist\${{ steps.pkg.outputs.name }}.zip" "dist\${{ steps.pkg.outputs.name }}.zip.sha256" `
+            --target "${{ github.sha }}" `
+            --title "DaramVncServer ${{ steps.pkg.outputs.version }}" `
+            --generate-notes

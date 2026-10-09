@@ -23,7 +23,18 @@ target_link_libraries(daramcore PUBLIC
     ws2_32 user32 gdi32 d3d11 dxgi bcrypt crypt32 advapi32 wtsapi32 userenv shell32
     mfplat mf mfuuid wmcodecdspuuid ole32 oleaut32 strmiids)
 
+# Version = <major.minor>.<build number>. CI passes the build number in the DARAM_BUILD_NUMBER environment variable
+# (GitHub run number); local builds are <major.minor>.0.
+set(DARAM_VERSION_BASE 0.1)
+set(DARAM_BUILD_NUMBER 0 CACHE STRING "Build number appended to the version")
+if(DEFINED ENV{DARAM_BUILD_NUMBER} AND NOT "$ENV{DARAM_BUILD_NUMBER}" STREQUAL "")
+    set(DARAM_BUILD_NUMBER "$ENV{DARAM_BUILD_NUMBER}")
+endif()
+set(DARAM_VERSION "${DARAM_VERSION_BASE}.${DARAM_BUILD_NUMBER}")
+message(STATUS "DaramVncServer version ${DARAM_VERSION}")
+
 add_executable(daramvnc src/main.cpp)
+target_compile_definitions(daramvnc PRIVATE DARAM_VERSION="${DARAM_VERSION}")
 target_link_libraries(daramvnc PRIVATE daramcore)
 
 file(GLOB TEST_SOURCES CONFIGURE_DEPENDS tests/*.cpp)

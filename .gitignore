@@ -12,3 +12,5 @@ daramvnc.conf
 *.pem
 *.log
 __pycache__/
+.vcpkg-cache/
+dist/
