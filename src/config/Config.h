@@ -2,7 +2,7 @@
 #include <string>
 
 struct ServerConfig {
-    std::string bind = "127.0.0.1";
+    std::string bind = "0.0.0.0";  // all IPv4 interfaces; refused until credentials exist (see Server::start)
     int port = 5900;
 
     // VeNCrypt X509Plain credentials (PBKDF2-SHA256 hash, never the password itself).

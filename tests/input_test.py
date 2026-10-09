@@ -123,7 +123,7 @@ def run_case(name, mode, expected, released):
         sink.kill()
         return [f"{name}: the input hooks did not start"]
 
-    server = subprocess.Popen([os.path.join(BUILD, "daramvnc.exe"), "run", "--port", str(PORT)],
+    server = subprocess.Popen([os.path.join(BUILD, "daramvnc.exe"), "run", "--port", str(PORT), "--bind", "127.0.0.1"],
                               stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(2.5)
     args = [os.path.join(BUILD, "daramvnc_client.exe"), "127.0.0.1", str(PORT), "--enc", "raw", "--seconds", "12", "--input-test", mode]

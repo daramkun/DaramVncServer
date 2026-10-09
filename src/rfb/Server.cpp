@@ -95,7 +95,7 @@ bool Server::start(std::string* error) {
     if (!resolveBind(cfg_.bind, cfg_.port, addr, addrLen, dualStack, error)) return false;
     if (!cfg_.hasCredentials() && !cfg_.isLoopbackOnly()) {
         *error = "refusing to listen on " + cfg_.bind +
-                 " without authentication; run 'daramvnc passwd <user>' first or bind to 127.0.0.1";
+                 " without authentication; run 'daramvnc passwd <user>' first (or pass --bind 127.0.0.1 to test on this machine only)";
         return false;
     }
     if (!initTls(error)) return false;

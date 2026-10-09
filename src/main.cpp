@@ -26,7 +26,8 @@ const char* kUsage =
     "       daramvnc uninstall | start | stop    manage the service (Administrator)\n"
     "\n"
     "Settings live in daramvnc.conf next to the executable (bind, port, user, password_hash, ...).\n"
-    "Without credentials the server only accepts connections from this machine (127.0.0.1).\n";
+    "The server listens on 0.0.0.0 by default and refuses to start until credentials are set (daramvnc passwd);\n"
+    "for a local-only test without credentials use --bind 127.0.0.1.\n";
 
 std::string readSecret(const char* prompt) {
     std::fputs(prompt, stderr);

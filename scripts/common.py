@@ -51,7 +51,7 @@ class Server:
 
     def start(self):
         logf = open(self.log_path, "wb")
-        self.proc = subprocess.Popen([exe("daramvnc"), "run", "--port", str(self.port), *self.args],
+        self.proc = subprocess.Popen([exe("daramvnc"), "run", "--port", str(self.port), *(() if "--bind" in self.args else ("--bind", "127.0.0.1")), *self.args],
                                      stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=logf)
         logf.close()
         deadline = time.time() + 15
