@@ -3,7 +3,7 @@
   python scripts/regression.py [--build DIR] [--animation] [--skip-input] [--only NAME[,NAME...]]
 
 Always: unit tests, decoders against a screenshot (Tight, ZRLE, Raw), region request, 8-bit colour map, 16-bit pixel
-format, three clients at once, IPv4/IPv6 binding, TLS login (good and bad password), fuzzing, and the real keyboard/
+format, three clients at once, IPv4/IPv6 binding, TLS login (good and bad password), fuzzing, the settings window (driven with window messages), and the real keyboard/
 mouse injection test (--skip-input leaves that out; it hooks input system-wide for about 35 s and swallows only the
 *injected* events).
 With --animation (a window is repainted on screen for several seconds per check): H.264 end to end, JPEG quality
@@ -133,6 +133,13 @@ def t_fuzz():
     record("fuzzing (100 malformed sessions)", "PASS" if r.returncode == 0 else "FAIL", r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.stderr[-200:])
 
 
+def t_gui():
+    r = subprocess.run([sys.executable, os.path.join(common.ROOT, "tests", "gui_test.py"), common.BUILD], capture_output=True, text=True, errors="replace", timeout=180)
+    fails = [l for l in r.stdout.splitlines() if l.startswith("FAIL")]
+    ok = r.returncode == 0
+    record("settings window (GUI)", "PASS" if ok else "FAIL", "form, save, validation" if ok else " | ".join(fails) or r.stdout[-300:])
+
+
 def t_input():
     r = subprocess.run([sys.executable, os.path.join(common.ROOT, "tests", "input_test.py"), common.BUILD], capture_output=True, text=True, timeout=300)
     lines = r.stdout.strip().splitlines()
@@ -176,7 +183,7 @@ def t_stall():
     record("stalled client does not delay the others", "PASS" if r.returncode == 0 else "FAIL", r.stdout.strip().splitlines()[0] if r.returncode == 0 and r.stdout.strip() else r.stdout[-400:])
 
 
-BASIC = [("unit", t_unit), ("decoders", t_decoders), ("concurrency", t_concurrency), ("ip", t_ip_binding), ("tls", t_tls), ("fuzz", t_fuzz), ("input", t_input)]
+BASIC = [("unit", t_unit), ("decoders", t_decoders), ("concurrency", t_concurrency), ("ip", t_ip_binding), ("tls", t_tls), ("fuzz", t_fuzz), ("gui", t_gui), ("input", t_input)]
 ANIMATED = [("h264", t_h264), ("quality", t_quality), ("rtt", t_rtt), ("stall", t_stall)]
 
 

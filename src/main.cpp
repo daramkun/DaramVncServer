@@ -8,6 +8,7 @@
 #include <thread>
 
 #include "config/Config.h"
+#include "gui/Gui.h"
 #include "input/Clipboard.h"
 #include "rfb/Server.h"
 #include "security/Auth.h"
@@ -24,6 +25,7 @@ const char* kUsage =
     "       daramvnc vncpasswd            set an optional VNC password (X509Vnc over TLS; legacy VNC auth if enabled)\n"
     "       daramvnc install [--open-firewall]   install and start the Windows service (Administrator)\n"
     "       daramvnc uninstall | start | stop    manage the service (Administrator)\n"
+    "       daramvnc gui                  settings window: control the service and edit daramvnc.conf (asks for elevation)\n"
     "       daramvnc version              print the version (<major>.<minor>.<build number>)\n"
     "\n"
     "Settings live in daramvnc.conf next to the executable (bind, port, user, password_hash, ...).\n"
@@ -116,7 +118,7 @@ int main(int argc, char** argv) {
     std::string configPath = defaultConfigPath();
     ServerConfig cfg;
     std::string portArg, bindArg;
-    bool openFirewall = false, viewOnlyArg = false, h264Arg = false;
+    bool openFirewall = false, viewOnlyArg = false, h264Arg = false, noElevateArg = false;
     int jpegMaxArg = 0, jpegMinArg = 0, clipPingSec = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -126,6 +128,7 @@ int main(int argc, char** argv) {
         else if (a == "--open-firewall") openFirewall = true;
         else if (a == "--view-only") viewOnlyArg = true;
         else if (a == "--h264") h264Arg = true;
+        else if (a == "--no-elevate") noElevateArg = true;  // gui: skip the UAC relaunch (automated tests)
         else if (a == "--debug-clipboard-ping" && i + 1 < argc) clipPingSec = std::atoi(argv[++i]);
         else if (a == "--jpeg-max" && i + 1 < argc) jpegMaxArg = std::atoi(argv[++i]);
         else if (a == "--jpeg-min" && i + 1 < argc) jpegMinArg = std::atoi(argv[++i]);
@@ -183,6 +186,7 @@ int main(int argc, char** argv) {
         if (err) std::fprintf(stderr, "Not started by the service manager (error %d). Use 'daramvnc run' for the console.\n", err);
         return err ? 1 : 0;
     }
+    if (cmd == "gui") return gui::run(configPath, noElevateArg);
     if (cmd == "agent") return runServer(cfg, true);
     if (cmd == "run" || cmd[0] == '-') return runServer(cfg, false, clipPingSec);
 

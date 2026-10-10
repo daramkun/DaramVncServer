@@ -21,7 +21,7 @@ endif()
 target_link_libraries(daramcore PUBLIC
     ZLIB::ZLIB zlib-ng::zlib libjpeg-turbo::turbojpeg-static OpenSSL::SSL OpenSSL::Crypto
     ws2_32 user32 gdi32 d3d11 dxgi bcrypt crypt32 advapi32 wtsapi32 userenv shell32
-    mfplat mf mfuuid wmcodecdspuuid ole32 oleaut32 strmiids)
+    comctl32 mfplat mf mfuuid wmcodecdspuuid ole32 oleaut32 strmiids)
 
 # Version = <major.minor>.<build number>. CI passes the build number in the DARAM_BUILD_NUMBER environment variable
 # (GitHub run number); local builds are <major.minor>.0.

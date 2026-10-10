@@ -142,6 +142,21 @@ void WINAPI serviceMain(DWORD, LPWSTR*) {
 
 int scmError() { return static_cast<int>(GetLastError()); }
 
+// Runs a command line without a console window and returns its exit code (-1 when it could not be started).
+int runHidden(std::wstring cmd) {
+    STARTUPINFOW si{};
+    si.cb = sizeof si;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return -1;
+    CloseHandle(pi.hThread);
+    DWORD code = static_cast<DWORD>(-1);
+    if (WaitForSingleObject(pi.hProcess, 15000) == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hProcess);
+    return static_cast<int>(code);
+}
+
+const wchar_t* const kRuleName = L"DaramVncServer";
+
 }  // namespace
 
 int runDispatcher() {
@@ -149,7 +164,7 @@ int runDispatcher() {
     return StartServiceCtrlDispatcherW(table) ? 0 : scmError();
 }
 
-int install(const std::string& configPath, int port, bool openFirewall) {
+int install(const std::string& configPath, int port, bool openFirewallRule) {
     (void)configPath;
     SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CREATE_SERVICE);
     if (!scm) return scmError();
@@ -167,11 +182,7 @@ int install(const std::string& configPath, int port, bool openFirewall) {
         CloseServiceHandle(svc);
     }
     CloseServiceHandle(scm);
-    if (!err && openFirewall) {
-        const std::wstring cmd = L"netsh advfirewall firewall add rule name=\"DaramVncServer\" dir=in action=allow protocol=TCP localport=" +
-                                 std::to_wstring(port) + L" program=\"" + exePath() + L"\" >nul";
-        _wsystem(cmd.c_str());
-    }
+    if (!err && openFirewallRule) openFirewall(port);
     return err;
 }
 
@@ -189,7 +200,7 @@ int uninstall() {
         err = scmError();
     }
     CloseServiceHandle(scm);
-    _wsystem(L"netsh advfirewall firewall delete rule name=\"DaramVncServer\" >nul 2>&1");
+    closeFirewall();
     return err;
 }
 
@@ -212,6 +223,71 @@ int stop() {
     if (svc) CloseServiceHandle(svc);
     CloseServiceHandle(scm);
     return err;
+}
+
+int restart() {
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm) return scmError();
+    SC_HANDLE svc = OpenServiceW(scm, kServiceName, SERVICE_STOP | SERVICE_START | SERVICE_QUERY_STATUS);
+    int err = 0;
+    if (!svc) {
+        err = scmError();
+    } else {
+        SERVICE_STATUS st{};
+        if (QueryServiceStatus(svc, &st) && st.dwCurrentState != SERVICE_STOPPED) {
+            if (st.dwCurrentState != SERVICE_STOP_PENDING && !ControlService(svc, SERVICE_CONTROL_STOP, &st)) err = scmError();
+            for (int i = 0; !err && i < 200; ++i) {  // 20 s
+                if (!QueryServiceStatus(svc, &st)) { err = scmError(); break; }
+                if (st.dwCurrentState == SERVICE_STOPPED) break;
+                Sleep(100);
+            }
+            if (!err && st.dwCurrentState != SERVICE_STOPPED) err = WAIT_TIMEOUT;
+        }
+        if (!err && !StartServiceW(svc, 0, nullptr)) err = scmError();
+        CloseServiceHandle(svc);
+    }
+    CloseServiceHandle(scm);
+    return err;
+}
+
+State queryState() {
+    SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+    if (!scm) return State::Unknown;
+    SC_HANDLE svc = OpenServiceW(scm, kServiceName, SERVICE_QUERY_STATUS);
+    State result = State::Unknown;
+    if (!svc) {
+        if (GetLastError() == ERROR_SERVICE_DOES_NOT_EXIST) result = State::NotInstalled;
+    } else {
+        SERVICE_STATUS st{};
+        if (QueryServiceStatus(svc, &st)) {
+            switch (st.dwCurrentState) {
+                case SERVICE_STOPPED: result = State::Stopped; break;
+                case SERVICE_START_PENDING: result = State::Starting; break;
+                case SERVICE_RUNNING: result = State::Running; break;
+                case SERVICE_STOP_PENDING: result = State::Stopping; break;
+                default: break;
+            }
+        }
+        CloseServiceHandle(svc);
+    }
+    CloseServiceHandle(scm);
+    return result;
+}
+
+int openFirewall(int port) {
+    closeFirewall();  // replace an older rule (the port may have changed)
+    const std::wstring cmd = L"netsh advfirewall firewall add rule name=\"" + std::wstring(kRuleName) +
+                             L"\" dir=in action=allow protocol=TCP localport=" + std::to_wstring(port) + L" program=\"" + exePath() + L"\"";
+    return runHidden(cmd) == 0 ? 0 : ERROR_ACCESS_DENIED;
+}
+
+int closeFirewall() {
+    runHidden(L"netsh advfirewall firewall delete rule name=\"" + std::wstring(kRuleName) + L"\"");
+    return 0;
+}
+
+bool firewallRuleExists() {
+    return runHidden(L"netsh advfirewall firewall show rule name=\"" + std::wstring(kRuleName) + L"\"") == 0;
 }
 
 }  // namespace service

@@ -12,6 +12,7 @@
 #include "RefH264Decoder.h"
 #include "encode/H264Encoder.h"
 #include "config/Config.h"
+#include "config/ConfigEdit.h"
 #include "encode/QualityController.h"
 #include "capture/GdiCapturer.h"
 #include "security/Auth.h"
@@ -344,6 +345,57 @@ void testZrleOnRealScreen() {
     }
 }
 
+void testConfigEdit() {
+    std::puts("config: validation and saving of the GUI-editable settings");
+    ServerConfig c;  // defaults: bind 0.0.0.0, no credentials
+    CHECK(validateConfig(c).size() == 1);  // refused: open to the network without credentials
+    c.passwordHash = "pbkdf2-sha256$1$aa$bb";
+    CHECK(validateConfig(c).empty());
+    ServerConfig loop;
+    loop.bind = "127.0.0.1";
+    CHECK(validateConfig(loop).empty());  // loopback without credentials is fine
+    loop.bind = "::1";
+    CHECK(validateConfig(loop).empty());
+    ServerConfig bad = c;
+    bad.bind = "not-an-address";
+    CHECK(!validateConfig(bad).empty());
+    bad = c; bad.port = 0;
+    CHECK(!validateConfig(bad).empty());
+    bad = c; bad.port = 70000;
+    CHECK(!validateConfig(bad).empty());
+    bad = c; bad.jpegQualityMin = 90; bad.jpegQualityMax = 50;
+    CHECK(!validateConfig(bad).empty());
+    bad = c; bad.jpegQualityMax = 100;
+    CHECK(!validateConfig(bad).empty());
+    bad = c; bad.logKeep = 51;
+    CHECK(!validateConfig(bad).empty());
+    CHECK(isValidBindAddress("::") && isValidBindAddress("localhost") && isValidBindAddress("192.168.0.10"));
+    CHECK(!isValidBindAddress("") && !isValidBindAddress("999.1.1.1") && !isValidBindAddress("host.example"));
+
+    char tmp[MAX_PATH];
+    GetTempPathA(MAX_PATH, tmp);
+    const std::string path = std::string(tmp) + "daramvnc_configedit_test.conf";
+    std::remove(path.c_str());
+    updateConfigKey(path, "user", "me");  // lines the editor must keep
+    updateConfigKey(path, "password_hash", "pbkdf2-sha256$1$aa$bb");
+    updateConfigKey(path, "cert", "C:/certs/a.crt");
+    ServerConfig edit = c;
+    edit.bind = "::"; edit.port = 5905; edit.viewOnly = true; edit.h264 = true; edit.allowLegacyVncAuth = true;
+    edit.jpegQualityMax = 70; edit.jpegQualityMin = 30; edit.logFile = "D:/logs/d.log"; edit.logMaxMb = 9; edit.logKeep = 2;
+    CHECK(saveEditableConfig(path, edit));
+    ServerConfig back;
+    CHECK(loadConfig(path, back));
+    CHECK(back.bind == "::" && back.port == 5905 && back.viewOnly && back.h264 && back.allowLegacyVncAuth);
+    CHECK(back.jpegQualityMax == 70 && back.jpegQualityMin == 30 && back.logFile == "D:/logs/d.log" && back.logMaxMb == 9 && back.logKeep == 2);
+    CHECK(back.user == "me" && back.passwordHash == "pbkdf2-sha256$1$aa$bb" && back.certFile == "C:/certs/a.crt");
+    edit.viewOnly = false; edit.logFile.clear();  // saving again overwrites, it does not append
+    CHECK(saveEditableConfig(path, edit));
+    ServerConfig again;
+    loadConfig(path, again);
+    CHECK(!again.viewOnly && again.logFile.empty() && again.port == 5905);
+    std::remove(path.c_str());
+}
+
 void testQualityController() {
     std::puts("quality controller: down fast on delay, up slowly when delay is gone, always inside [lo, hi]");
     QualityController c;
@@ -524,6 +576,7 @@ int main() {
     testColourMapped();
     testH264();
     testZrleOnRealScreen();
+    testConfigEdit();
     testQualityController();
     testConfigNormalize();
     testLogRotation();
