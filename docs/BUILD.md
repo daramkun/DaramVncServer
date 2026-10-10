@@ -79,7 +79,7 @@ python scripts\regression.py --skip-input   :: 전체 회귀 검증 (약 40초)
 
 | 명령 | 내용 |
 |---|---|
-| `python scripts\regression.py` | 단위 테스트, Tight/ZRLE/Raw 디코딩을 실제 스크린샷과 비교, 영역 요청, 8비트 컬러맵, 16비트, 동시 접속 3개, IPv4/IPv6 바인딩, TLS 로그인, 퍼징, 키보드/마우스 주입. 항목마다 PASS/FAIL/SKIP을 출력하고 실패가 있으면 종료 코드 1 |
+| `python scripts\regression.py` | 단위 테스트, Tight/ZRLE/Raw 디코딩을 실제 스크린샷과 비교, 영역 요청, 8비트 컬러맵, 16비트, 동시 접속 3개, IPv4/IPv6 바인딩, TLS 로그인, 퍼징, 설정 창(GUI), 키보드/마우스 주입. 항목마다 PASS/FAIL/SKIP을 출력하고 실패가 있으면 종료 코드 1 |
 | `--skip-input` | 시스템 전체 입력 훅을 거는 입력 주입 테스트(약 35초)를 생략 |
 | `--animation` | 애니메이션 창이 화면에 뜨는 검사를 추가: H.264, 느린 회선에서 JPEG 품질 하락·복구, RTT 200 ms 처리량, 멈춘 클라이언트 |
 | `--only unit,decoders,...` | 일부 검사만 실행 |
