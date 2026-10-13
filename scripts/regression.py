@@ -127,6 +127,37 @@ def t_tls():
     record("no-credentials client is not offered None", "PASS" if "does not offer" in none else "FAIL", none.strip()[-100:])
 
 
+def t_no_auth():
+    with tempfile.TemporaryDirectory(prefix="daramvnc_no_auth_") as directory:
+        cfg = os.path.join(directory, "server.conf")
+        with open(cfg, "w", encoding="utf-8") as f:
+            f.write("bind=0.0.0.0\nview_only=1\n")
+        port = next(ports)
+        with common.Server(port, "--bind", "0.0.0.0", "--config", cfg) as srv:
+            # Independently check the on-wire offer: exactly None, and a successful
+            # security result followed by ServerInit, without a password or TLS.
+            with socket.create_connection(("127.0.0.1", port), timeout=5) as s:
+                def read_exact(n):
+                    data = b""
+                    while len(data) < n:
+                        part = s.recv(n - len(data))
+                        if not part:
+                            raise RuntimeError("server closed unauthenticated handshake")
+                        data += part
+                    return data
+                version = read_exact(12)
+                s.sendall(b"RFB 003.008\n")
+                offer = read_exact(2)
+                s.sendall(b"\x01")
+                result = read_exact(4)
+                s.sendall(b"\x01")  # shared ClientInit
+                dimensions = read_exact(4)
+            record("0.0.0.0 permits RFB None authentication", "PASS" if version == b"RFB 003.008\n" and offer == b"\x01\x01" and result == b"\0" * 4 and int.from_bytes(dimensions[:2], "big") > 0 and int.from_bytes(dimensions[2:], "big") > 0 else "FAIL")
+            out = common.client("--seconds", 1, port=port) or ""
+            record("unauthenticated client receives screen updates", "PASS" if (common.updates_in(out) or (0, 0))[0] > 0 else "FAIL", out.strip()[-100:])
+            record("unauthenticated network listener logs warning", "PASS" if "WITHOUT AUTHENTICATION OR ENCRYPTION" in srv.log() else "FAIL")
+
+
 def t_vnc_auth():
     # RealVNC's standard RFB security type 2, alongside the existing TLS paths.
     with tempfile.TemporaryDirectory(prefix="daramvnc_vnc_auth_") as directory:
@@ -229,7 +260,7 @@ def t_stall():
     record("stalled client does not delay the others", "PASS" if r.returncode == 0 else "FAIL", r.stdout.strip().splitlines()[0] if r.returncode == 0 and r.stdout.strip() else r.stdout[-400:])
 
 
-BASIC = [("unit", t_unit), ("decoders", t_decoders), ("concurrency", t_concurrency), ("ip", t_ip_binding), ("tls", t_tls), ("vnc", t_vnc_auth), ("fuzz", t_fuzz), ("gui", t_gui), ("input", t_input)]
+BASIC = [("unit", t_unit), ("decoders", t_decoders), ("concurrency", t_concurrency), ("ip", t_ip_binding), ("tls", t_tls), ("noauth", t_no_auth), ("vnc", t_vnc_auth), ("fuzz", t_fuzz), ("gui", t_gui), ("input", t_input)]
 ANIMATED = [("h264", t_h264), ("quality", t_quality), ("rtt", t_rtt), ("stall", t_stall)]
 
 

@@ -19,8 +19,6 @@ std::vector<std::string> validateConfig(const ServerConfig& cfg) {
     else if (cfg.jpegQualityMin > cfg.jpegQualityMax) problems.push_back("JPEG 품질 하한이 상한보다 클 수 없습니다.");
     if (cfg.logMaxMb < 0 || cfg.logMaxMb > 10240) problems.push_back("로그 파일 최대 크기(MB)는 0~10240 사이여야 합니다. (0 = 회전 안 함)");
     if (cfg.logKeep < 0 || cfg.logKeep > 50) problems.push_back("보관할 이전 로그 파일 수는 0~50 사이여야 합니다.");
-    if (problems.empty() && !cfg.hasCredentials() && !cfg.isLoopbackOnly())
-        problems.push_back("로그인 비밀번호나 VNC 비밀번호가 없으면 수신 주소를 127.0.0.1(또는 ::1)로만 둘 수 있습니다. 먼저 비밀번호를 설정하세요.");
     return problems;
 }
 

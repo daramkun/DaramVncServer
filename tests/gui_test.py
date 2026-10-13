@@ -185,19 +185,23 @@ def main():
     finally:
         stop_gui(proc, win)
 
-    # Without credentials the form may not save a non-loopback address.
+    # Missing credentials warn without blocking a save or displaying a modal dialog.
     os.remove(CONF)
     proc, win = start_gui()
     try:
         time.sleep(0.5)
         check("empty config: default bind is 0.0.0.0", text(win, "bind") == "0.0.0.0", text(win, "bind"))
         check("empty config: account line says no password", "설정 안 됨" in text(win, "account"), text(win, "account"))
-        check("saving 0.0.0.0 without credentials is refused", click_save_expecting_dialog(win, proc.pid))
-        check("nothing was written", not os.path.exists(CONF))
+        check("empty config: account line warns about network access", "경고" in text(win, "account"), text(win, "account"))
+        u.SendMessageW(u.GetDlgItem(win, ID["save"]), BM_CLICK, 0, 0)
+        time.sleep(0.3)
+        check("saving 0.0.0.0 without credentials succeeds", read_conf().get("bind") == "0.0.0.0", str(read_conf()))
+        check("save shows a non-blocking authentication warning", "경고" in text(win, "message"), text(win, "message"))
         set_text(win, "bind", "127.0.0.1")
         u.SendMessageW(u.GetDlgItem(win, ID["save"]), BM_CLICK, 0, 0)
         time.sleep(0.3)
         check("loopback without credentials saves", read_conf().get("bind") == "127.0.0.1", str(read_conf()))
+        check("loopback save clears the network warning", "경고" not in text(win, "account") and "경고" not in text(win, "message"))
     finally:
         stop_gui(proc, win)
         if os.path.exists(CONF):

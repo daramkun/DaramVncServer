@@ -30,7 +30,7 @@ const char* kUsage =
     "       daramvnc version              print the version (<major>.<minor>.<build number>)\n"
     "\n"
     "Settings live in daramvnc.conf next to the executable (bind, port, user, password_hash, ...).\n"
-    "The server listens on 0.0.0.0 by default and refuses to start until credentials are set (daramvnc passwd);\n"
+    "The server listens on 0.0.0.0 by default. Without credentials it allows unauthenticated, unencrypted access and prints a warning;\n"
     "for a local-only test without credentials use --bind 127.0.0.1.\n";
 
 std::string readSecret(const char* prompt) {

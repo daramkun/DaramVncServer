@@ -7,7 +7,7 @@
 // Validation and saving of the settings the GUI edits. Kept apart from the window code so it can be unit tested.
 
 // Returns one human-readable (Korean) message per problem; empty means the settings can be used as they are.
-// Also catches the combination the server refuses at start-up: no credentials on a non-loopback address.
+// Missing credentials are allowed; the GUI and server display a warning for network access.
 std::vector<std::string> validateConfig(const ServerConfig& cfg);
 
 // True for "localhost", an IPv4 address or an IPv6 address (what Server accepts as `bind`).

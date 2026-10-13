@@ -19,7 +19,7 @@ public:
     explicit Server(ServerConfig cfg);
     ~Server();
 
-    // Binds and starts accepting. Refuses to listen on a non-loopback address without credentials.
+    // Binds and starts accepting. Warns when a non-loopback address has no credentials.
     bool start(std::string* error);
     void stop();
     int port() const { return port_; }

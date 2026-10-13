@@ -88,16 +88,11 @@ bool Server::start(std::string* error) {
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) { *error = "WSAStartup failed"; return false; }
 
-    // Check the address first so a typo is reported as a typo, not as a missing password.
+    // Resolve the address before opening the listening socket.
     sockaddr_storage addr;
     int addrLen = 0;
     bool dualStack = false;
     if (!resolveBind(cfg_.bind, cfg_.port, addr, addrLen, dualStack, error)) return false;
-    if (!cfg_.hasCredentials() && !cfg_.isLoopbackOnly()) {
-        *error = "refusing to listen on " + cfg_.bind +
-                 " without authentication; run 'daramvnc passwd <user>' first (or pass --bind 127.0.0.1 to test on this machine only)";
-        return false;
-    }
     if (!initTls(error)) return false;
     if (cfg_.allowLegacyVncAuth) {
         if (cfg_.vncPasswordProtected.empty()) {
@@ -133,8 +128,12 @@ bool Server::start(std::string* error) {
 
     running_ = true;
     acceptThread_ = std::thread([this] { acceptLoop(); });
+    if (!cfg_.hasCredentials() && !cfg_.isLoopbackOnly()) {
+        LOGI("WARNING: listening on %s:%d WITHOUT AUTHENTICATION OR ENCRYPTION; anyone who can reach this port can view the screen%s",
+             cfg_.bind.c_str(), port_, cfg_.viewOnly ? "" : " and control this computer");
+    }
     LOGI("listening on %s%s%s:%d%s (%s)", addr.ss_family == AF_INET6 ? "[" : "", cfg_.bind.c_str(), addr.ss_family == AF_INET6 ? "]" : "", port_,
-         dualStack ? " (IPv4 and IPv6)" : "", cfg_.hasCredentials() ? "TLS + authentication" : "no authentication, loopback only");
+         dualStack ? " (IPv4 and IPv6)" : "", cfg_.hasCredentials() ? "TLS + authentication" : "no authentication or encryption");
     return true;
 }
 

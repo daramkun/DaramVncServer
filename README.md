@@ -30,7 +30,7 @@ daramvnc gui                  설정 창: 서비스 제어와 설정 편집 (관
 
 설정은 실행 파일 옆 `daramvnc.conf`(`bind`, `port`, `user`, `password_hash`, `view_only`, `allow_legacy_vnc_auth`, `log` …).
 
-- 기본 `bind`는 **`0.0.0.0`**(모든 IPv4 인터페이스)입니다. 인증 정보가 없으면 인증 없이 열리는 것을 막기 위해 **시작을 거부**하므로 먼저 `daramvnc passwd <user>`를 실행하세요. 인증 없이 이 PC에서만 시험하려면 `--bind 127.0.0.1`을 씁니다.
+- 기본 `bind`는 **`0.0.0.0`**(모든 IPv4 인터페이스)입니다. 인증 정보가 없으면 **경고를 출력하고 인증·암호화 없이 접속을 허용**합니다. 네트워크에서 포트에 접근할 수 있는 누구나 화면을 보고 PC를 조작할 수 있습니다(`view_only=1`이면 보기만 허용). 이 PC에서만 접속하려면 `--bind 127.0.0.1`을 씁니다.
 - 원격 접속: `daramvnc passwd me` 후 실행합니다. `bind=0.0.0.0`(기본)은 IPv4만, **`bind=::`은 IPv4와 IPv6 모두(듀얼스택)**, `bind=::1`은 IPv6 루프백만 받습니다. 뷰어에서 **VeNCrypt(X509Plain, TLS)** 로 접속합니다. 첫 실행 시 자체 서명 인증서(`server.crt/key`)를 만듭니다. 잘못된 주소는 시작할 때 `invalid bind address`로 알려 줍니다.
 - 로그: 서비스/에이전트는 실행 파일 옆 `daramvnc.log`에 기록하며 **크기 기준으로 회전**합니다(`log_max_mb`=5, `log_keep`=3: 5MB가 되면 `daramvnc.log.1`, `.2`, `.3`으로 밀리고 가장 오래된 것이 삭제됩니다. `log_max_mb=0`이면 회전하지 않음, `log_keep=0`이면 이전 파일을 남기지 않음). `log=경로`로 위치를 바꿀 수 있습니다.
 - 서비스 모드는 활성 콘솔 세션에 SYSTEM 권한 에이전트를 띄워 로그인 화면·UAC(보안 데스크톱)를 따라갑니다.

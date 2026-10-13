@@ -175,6 +175,8 @@ void buildWindow() {
 void showAccount() {
     std::wstring t = g.cfg.passwordHash.empty() ? L"로그인 비밀번호: 설정 안 됨" : L"로그인 비밀번호: 설정됨";
     t += g.cfg.vncPasswordProtected.empty() ? L"   |   VNC 비밀번호: 설정 안 됨" : L"   |   VNC 비밀번호: 설정됨";
+    if (!g.cfg.hasCredentials() && !g.cfg.isLoopbackOnly())
+        t = L"경고: 비밀번호 설정 안 됨 — 누구나 접속 가능 (암호화 없음)";
     setText(kAccountText, t);
 }
 
@@ -285,6 +287,9 @@ bool saveForm() {
     g.cfg = edited;
     const service::State st = service::queryState();
     setStatus(st == service::State::Running ? L"저장했습니다. 실행 중인 서비스에는 재시작해야 적용됩니다." : L"저장했습니다.");
+    showAccount();
+    if (!g.cfg.hasCredentials() && !g.cfg.isLoopbackOnly())
+        setStatus(L"저장했습니다. 경고: 인증·암호화 없이 접속 허용. 실행 중이면 재시작하세요.");
     return true;
 }
 

@@ -348,7 +348,7 @@ void testZrleOnRealScreen() {
 void testConfigEdit() {
     std::puts("config: validation and saving of the GUI-editable settings");
     ServerConfig c;  // defaults: bind 0.0.0.0, no credentials
-    CHECK(validateConfig(c).size() == 1);  // refused: open to the network without credentials
+    CHECK(validateConfig(c).empty());  // network access without credentials is allowed with a warning
     c.passwordHash = "pbkdf2-sha256$1$aa$bb";
     CHECK(validateConfig(c).empty());
     ServerConfig loop;

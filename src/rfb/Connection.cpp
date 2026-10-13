@@ -127,7 +127,7 @@ bool Connection::negotiate() {
 
     std::vector<uint8_t> types;
     if (!cfg_.hasCredentials()) {
-        types.push_back(1);  // None: only reachable when bound to loopback (enforced by Server)
+        types.push_back(1);  // None: Server warns when this is exposed beyond loopback.
     } else {
         // VeNCrypt (TLS) carries both the user/password login and the VNC-password variant.
         if (tlsCtx_ && (!cfg_.passwordHash.empty() || !cfg_.vncPasswordProtected.empty())) types.push_back(19);
