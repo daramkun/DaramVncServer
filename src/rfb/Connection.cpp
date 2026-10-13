@@ -139,8 +139,15 @@ bool Connection::negotiate() {
     if (!tp_->writeAll(offer.data(), offer.size())) return false;
 
     uint8_t choice;
-    if (!tp_->readExact(&choice, 1)) return false;
-    if (std::find(types.begin(), types.end(), choice) == types.end()) return false;
+    if (!tp_->readExact(&choice, 1)) {
+        LOGI("%s: client disconnected before selecting an authentication type%s", peer_.c_str(),
+             types.size() == 1 && types[0] == 19 ? "; only VeNCrypt offered, RealVNC requires 'vncpasswd --realvnc'" : "");
+        return false;
+    }
+    if (std::find(types.begin(), types.end(), choice) == types.end()) {
+        LOGI("%s: client selected an unsupported authentication type %u", peer_.c_str(), static_cast<unsigned>(choice));
+        return false;
+    }
     if (!g_failures.allowed(peer_)) return sendSecurityFailure("Too many failed attempts");
 
     switch (choice) {

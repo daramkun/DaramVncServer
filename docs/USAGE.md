@@ -122,6 +122,25 @@ daramvnc.exe start
 - 성능을 위해 뷰어에서 **Tight 또는 ZRLE 인코딩과 자동(Auto) 품질**을 쓰는 것이 좋습니다. 서버는 지연을 재서 JPEG 품질을 스스로 조절합니다. 뷰어에서 품질을 낮게 지정하면 그 값이 상한이 됩니다.
 - ContinuousUpdates, Fence, Cursor, ExtendedDesktopSize, Extended Clipboard를 지원하는 뷰어일수록 반응성이 좋습니다.
 
+### RealVNC Viewer로 접속
+
+RealVNC Viewer는 이 서버의 VeNCrypt TLS 인증과 호환되지 않습니다. 서버 PC에서 다음 명령으로 별도의 VNC 비밀번호를 설정하고 일반 VNC 인증(RFB security type 2)을 활성화하세요.
+
+```bat
+daramvnc.exe vncpasswd --realvnc
+daramvnc.exe stop
+daramvnc.exe start
+```
+
+포그라운드 실행 중이라면 종료 후 `daramvnc.exe run`으로 다시 실행합니다. 다른 설정 파일을 사용한다면 `vncpasswd --realvnc --config FILE`로 같은 파일을 지정하세요.
+
+- GUI에서는 **VNC 비밀번호 설정** 후 **RealVNC 호환 인증**을 체크하고 **저장 후 서비스 재시작**을 누릅니다.
+- RealVNC Viewer에서 서버 IP와 포트를 지정하고, 연결의 암호화 설정에서 비암호화 연결을 허용하세요. 사용자 이름 없이 위에서 설정한 VNC 비밀번호로 인증합니다. `passwd <user>`의 로그인 비밀번호와는 별개입니다.
+- 인증에는 비밀번호의 첫 **8바이트**만 사용됩니다. 호환성을 위해 ASCII 비밀번호를 쓰세요.
+- 이 방식은 화면·입력을 암호화하지 않습니다. VPN이나 보안 터널로 보호된 연결에서 사용하세요. 기존 VeNCrypt TLS 인증도 함께 제공됩니다.
+- VNC 비밀번호는 해당 Windows PC에서만 복호화되므로 회사 서버 PC에서 설정해야 합니다. 다른 PC에서 만든 `vnc_password_dpapi`를 복사하면 인증에 실패합니다.
+- 호환 모드를 끄려면 `allow_legacy_vnc_auth=0`으로 설정하고 서버를 재시작합니다.
+
 ## 6. 설정 파일 (`daramvnc.conf`)
 
 실행 파일과 같은 폴더에 있는 `키=값` 텍스트 파일입니다. `#`이나 `;`로 시작하는 줄은 주석이고, 모르는 키는 무시합니다. 파일이 없으면 기본값을 씁니다. `passwd`/`vncpasswd`는 해당 키만 갱신하고 나머지는 보존합니다. `--config FILE`로 다른 파일을 쓸 수 있습니다.
@@ -133,7 +152,7 @@ daramvnc.exe start
 | `user` | (없음) | 로그인 사용자 이름 (`passwd`가 기록) |
 | `password_hash` | (없음) | PBKDF2-SHA256 해시 (`passwd`가 기록, 직접 편집하지 마세요) |
 | `vnc_password_dpapi` | (없음) | DPAPI로 보호한 VNC 비밀번호 (`vncpasswd`가 기록) |
-| `allow_legacy_vnc_auth` | `0` | TLS 없는 옛 VNC 인증 허용 |
+| `allow_legacy_vnc_auth` | `0` | RealVNC 호환 일반 VNC 인증 허용 (TLS 없음, VNC 비밀번호 필요). `vncpasswd --realvnc`가 `1`로 설정 |
 | `view_only` | `0` | `1`이면 키보드·마우스·클립보드 입력을 모두 무시 (화면 보기 전용) |
 | `jpeg_quality_max` | `85` | JPEG 품질 상한 (1~99) |
 | `jpeg_quality_min` | `40` | JPEG 품질 하한 (1~99, 상한보다 크면 상한에 맞춤) |

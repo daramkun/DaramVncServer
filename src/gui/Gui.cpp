@@ -140,7 +140,7 @@ void buildWindow() {
     edit(kPort, 384, 174, 70);
     check(kChkViewOnly, L"보기 전용 (키보드·마우스·클립보드 입력 무시)", kLeft, 204, 330);
     check(kChkH264, L"H.264 사용", 370, 204, 160);
-    check(kChkLegacy, L"TLS 없는 옛 VNC 인증 허용 (권장하지 않음)", kLeft, 230, 330);
+    check(kChkLegacy, L"RealVNC 호환 인증 (TLS 없음, VNC 비밀번호 필요)", kLeft, 230, 510);
 
     group(L"화질 (JPEG)", 10, 272, 540, 56);
     label(L"상한 (1~99):", kLeft, 294, 90);
@@ -397,7 +397,7 @@ void setLoginPassword() {
 
 void setVncPassword() {
     std::string pw;
-    if (!askPassword(L"VNC 비밀번호", L"사용자 이름 없이 비밀번호만 쓰는 뷰어를 위한 VNC 비밀번호입니다. (8자 이상, 이 컴퓨터에서만 복호화됨)", pw)) return;
+    if (!askPassword(L"VNC 비밀번호", L"8자 이상 입력하세요. 인증에는 첫 8바이트만 사용됩니다. RealVNC는 접속 설정의 호환 인증도 켜야 합니다.", pw)) return;
     const std::string sealed = auth::protectSecret(pw);
     SecureZeroMemory(pw.data(), pw.size());
     if (sealed.empty() || !updateConfigKey(g.configPath, "vnc_password_dpapi", sealed)) {

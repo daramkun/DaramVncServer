@@ -103,6 +103,7 @@ int main(int argc, char** argv) {
     double throttleKBps = 0, throttleUntil = 0, ackDelayMs = 0, stallAt = 0, stallFor = 0;
     std::string inputTest;  // "std" or "ext": send a scripted keyboard/mouse sequence (see tests/input_test.py)
     bool continuous = false, verify = false, wantCursor = true, qemuKey = false, wantH264 = false;
+    bool legacyVnc = false;  // exercise the standard security type used by RealVNC Viewer
     int rx = 0, ry = 0, rw = -1, rh = -1, resizeW = 0, resizeH = 0;
     int positional = 0;
     for (int i = 1; i < argc; ++i) {
@@ -110,6 +111,7 @@ int main(int argc, char** argv) {
         if (a == "--user" && i + 1 < argc) user = argv[++i];
         else if (a == "--pass" && i + 1 < argc) pass = argv[++i];
         else if (a == "--vncpass" && i + 1 < argc) vncPass = argv[++i];
+        else if (a == "--legacy-vnc") legacyVnc = true;
         else if (a == "--enc" && i + 1 < argc) enc = argv[++i];
         else if (a == "--pf" && i + 1 < argc) pfName = argv[++i];
         else if (a == "--seconds" && i + 1 < argc) seconds = std::atoi(argv[++i]);
@@ -169,8 +171,9 @@ int main(int argc, char** argv) {
         std::vector<uint8_t> types(static_cast<size_t>(nTypes));
         io.readExact(types.data(), types.size());
         const bool useVncPass = !vncPass.empty();
-        const bool useTls = !user.empty() || useVncPass;
-        const uint8_t want = useTls ? 19 : 1;
+        if (legacyVnc && (!useVncPass || !user.empty())) throw std::runtime_error("--legacy-vnc requires --vncpass and no --user");
+        const bool useTls = !legacyVnc && (!user.empty() || useVncPass);
+        const uint8_t want = legacyVnc ? 2 : (useTls ? 19 : 1);
         if (std::find(types.begin(), types.end(), want) == types.end()) throw std::runtime_error("server does not offer the wanted security type");
         io.writeAll(&want, 1);
         if (useTls) {
@@ -203,6 +206,13 @@ int main(int argc, char** argv) {
                 cred.insert(cred.end(), user.begin(), user.end()); cred.insert(cred.end(), pass.begin(), pass.end());
                 io.writeAll(cred.data(), cred.size());
             }
+        }
+        if (legacyVnc) {
+            uint8_t challenge[16], response[16];
+            io.readExact(challenge, 16);
+            if (!auth::vncAuthResponse(vncPass, challenge, response)) throw std::runtime_error("DES failed");
+            io.writeAll(response, 16);
+            std::puts("VNC authentication: security type 2 (no TLS)");
         }
         if (io.u32() != 0) {
             uint32_t n = io.u32(); std::string why(n, '\0'); io.readExact(why.data(), n);

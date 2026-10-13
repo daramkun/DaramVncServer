@@ -99,6 +99,13 @@ bool Server::start(std::string* error) {
         return false;
     }
     if (!initTls(error)) return false;
+    if (cfg_.allowLegacyVncAuth) {
+        if (cfg_.vncPasswordProtected.empty()) {
+            LOGI("RealVNC compatibility requested but no VNC password is set; run 'daramvnc vncpasswd --realvnc'");
+        } else {
+            LOGI("RealVNC-compatible VNC authentication enabled (security type 2); screen and input traffic are not encrypted on this authentication path");
+        }
+    }
 
     listen_ = socket(addr.ss_family, SOCK_STREAM, IPPROTO_TCP);
     if (listen_ == INVALID_SOCKET) {

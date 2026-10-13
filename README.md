@@ -23,7 +23,7 @@ python tests\input_test.py build :: 키보드/마우스 주입을 실제 SendInp
 ```text
 daramvnc run [--port N] [--bind ADDR] [--view-only] [--h264]   포그라운드 실행 (Enter로 종료)
 daramvnc passwd <user>        로그인 사용자/비밀번호 설정 (PBKDF2-SHA256 해시만 저장)
-daramvnc vncpasswd            VNC 비밀번호 설정 (DPAPI로 보호해 저장)
+daramvnc vncpasswd [--realvnc] VNC 비밀번호 설정 (DPAPI로 보호해 저장, --realvnc는 TLS 없는 RealVNC 호환 인증도 활성화)
 daramvnc install [--open-firewall]   서비스 설치 (관리자)    daramvnc start | stop | uninstall
 daramvnc gui                  설정 창: 서비스 제어와 설정 편집 (관리자 권한 요청)
 ```

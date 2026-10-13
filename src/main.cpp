@@ -23,6 +23,7 @@ const char* kUsage =
     "usage: daramvnc [run] [--port N] [--bind ADDR] [--config FILE] [--view-only] [--h264] [--jpeg-max Q] [--jpeg-min Q]   run in the foreground\n"
     "       daramvnc passwd <user>        set the login (VeNCrypt X509Plain over TLS) user and password\n"
     "       daramvnc vncpasswd            set an optional VNC password (X509Vnc over TLS; legacy VNC auth if enabled)\n"
+    "       daramvnc vncpasswd --realvnc  set a VNC password and enable RealVNC-compatible authentication (no TLS)\n"
     "       daramvnc install [--open-firewall]   install and start the Windows service (Administrator)\n"
     "       daramvnc uninstall | start | stop    manage the service (Administrator)\n"
     "       daramvnc gui                  settings window: control the service and edit daramvnc.conf (asks for elevation)\n"
@@ -119,6 +120,7 @@ int main(int argc, char** argv) {
     ServerConfig cfg;
     std::string portArg, bindArg;
     bool openFirewall = false, viewOnlyArg = false, h264Arg = false, noElevateArg = false;
+    bool realVncArg = false;
     int jpegMaxArg = 0, jpegMinArg = 0, clipPingSec = 0;
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -128,10 +130,15 @@ int main(int argc, char** argv) {
         else if (a == "--open-firewall") openFirewall = true;
         else if (a == "--view-only") viewOnlyArg = true;
         else if (a == "--h264") h264Arg = true;
+        else if (a == "--realvnc") realVncArg = true;
         else if (a == "--no-elevate") noElevateArg = true;  // gui: skip the UAC relaunch (automated tests)
         else if (a == "--debug-clipboard-ping" && i + 1 < argc) clipPingSec = std::atoi(argv[++i]);
         else if (a == "--jpeg-max" && i + 1 < argc) jpegMaxArg = std::atoi(argv[++i]);
         else if (a == "--jpeg-min" && i + 1 < argc) jpegMinArg = std::atoi(argv[++i]);
+    }
+    if (realVncArg && cmd != "vncpasswd") {
+        std::fputs("--realvnc is only supported with vncpasswd.\n", stderr);
+        return 2;
     }
     loadConfig(configPath, cfg);
     if (cfg.certFile.empty()) cfg.certFile = exeDirectory() + "\\server.crt";
@@ -157,15 +164,27 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (cmd == "vncpasswd") {
-        const std::string pw = readNewPassword();
+        std::string pw = readNewPassword();
         if (pw.empty()) return 1;
         const std::string sealed = auth::protectSecret(pw);
+        SecureZeroMemory(pw.data(), pw.size());
         if (sealed.empty() || !updateConfigKey(configPath, "vnc_password_dpapi", sealed)) {
             std::fprintf(stderr, "Could not store the password in %s\n", configPath.c_str());
             return 1;
         }
-        std::printf("VNC password stored (DPAPI-protected). Only the first 8 characters take part in legacy VNC authentication.\n"
-                    "Legacy VNC authentication without TLS is weak; it stays off unless allow_legacy_vnc_auth=1 is set.\n");
+        if (realVncArg && !updateConfigKey(configPath, "allow_legacy_vnc_auth", "1")) {
+            std::fprintf(stderr, "Password stored, but could not enable RealVNC compatibility in %s\n", configPath.c_str());
+            return 1;
+        }
+        std::puts("VNC password stored (DPAPI-protected). Only the first 8 bytes take part in VNC authentication.");
+        if (realVncArg || cfg.allowLegacyVncAuth) {
+            std::puts("RealVNC-compatible VNC authentication is enabled. Screen and input traffic are NOT encrypted; use a VPN or secure tunnel.\n"
+                      "Allow unencrypted connections in RealVNC Viewer and use this VNC password (no user name).\n"
+                      "Restart the server/service to apply the settings. Set allow_legacy_vnc_auth=0 to disable compatibility.");
+        } else {
+            std::puts("Authentication without TLS stays off. Use vncpasswd --realvnc to enable RealVNC compatibility.\n"
+                      "Restart the server/service to apply the password.");
+        }
         return 0;
     }
     if (cmd == "install" || cmd == "uninstall" || cmd == "start" || cmd == "stop") {

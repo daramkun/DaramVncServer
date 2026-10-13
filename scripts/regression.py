@@ -19,6 +19,7 @@ import re
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 
 import common
@@ -126,6 +127,51 @@ def t_tls():
     record("no-credentials client is not offered None", "PASS" if "does not offer" in none else "FAIL", none.strip()[-100:])
 
 
+def t_vnc_auth():
+    # RealVNC's standard RFB security type 2, alongside the existing TLS paths.
+    with tempfile.TemporaryDirectory(prefix="daramvnc_vnc_auth_") as directory:
+        cfg = os.path.join(directory, "server.conf")
+        with open(cfg, "w", encoding="utf-8") as f:
+            f.write("# keep existing settings\nview_only=1\n")
+
+        def set_password(*options):
+            r = subprocess.run([common.exe("daramvnc"), "vncpasswd", "--config", cfg, *options],
+                               input=b"Vnc-test-password\nVnc-test-password\n", capture_output=True, timeout=30)
+            if r.returncode:
+                raise RuntimeError("vncpasswd failed: " + r.stderr.decode(errors="replace"))
+
+        set_password()
+        port = next(ports)
+        with common.Server(port, "--config", cfg):
+            out = common.client("--legacy-vnc", "--vncpass", "Vnc-test-password", "--seconds", 1, port=port) or ""
+            record("legacy VNC authentication off by default", "PASS" if "does not offer" in out else "FAIL", out.strip()[-100:])
+            tls = common.client("--vncpass", "Vnc-test-password", "--seconds", 1, port=port) or ""
+            record("X509Vnc TLS password authentication", "PASS" if "TLS:" in tls and "connected to" in tls else "FAIL")
+
+        set_password("--realvnc")
+        with open(cfg, encoding="utf-8") as f:
+            text = f.read()
+        record("RealVNC setup preserves existing settings", "PASS" if "allow_legacy_vnc_auth=1" in text and "# keep existing settings\nview_only=1\n" in text else "FAIL")
+        # Also retain username/password TLS authentication when compatibility is on.
+        r = subprocess.run([common.exe("daramvnc"), "passwd", "tester", "--config", cfg],
+                           input=b"S3cure-test-pw\nS3cure-test-pw\n", capture_output=True, timeout=30)
+        if r.returncode:
+            raise RuntimeError("could not create TLS user")
+        port = next(ports)
+        with common.Server(port, "--config", cfg):
+            # Same first 8 bytes, different suffix: mandated by VNC's DES protocol.
+            good = common.client("--legacy-vnc", "--vncpass", "Vnc-test-other", "--seconds", 1, port=port) or ""
+            bad = common.client("--legacy-vnc", "--vncpass", "wrong-password", "--seconds", 1, port=port) or ""
+            none = common.client("--seconds", 1, port=port) or ""
+            tls = common.client("--vncpass", "Vnc-test-password", "--seconds", 1, port=port) or ""
+            login = common.client("--user", "tester", "--pass", "S3cure-test-pw", "--seconds", 1, port=port) or ""
+        record("RealVNC security type 2 login and first 8 bytes", "PASS" if "connected to" in good and "TLS:" not in good else "FAIL", good.strip()[-150:])
+        record("RealVNC wrong password rejected", "PASS" if "authentication failed" in bad else "FAIL", bad.strip()[-100:])
+        record("RealVNC mode does not offer unauthenticated access", "PASS" if "does not offer" in none else "FAIL")
+        record("X509Vnc still works with RealVNC mode", "PASS" if "TLS:" in tls and "connected to" in tls else "FAIL")
+        record("X509Plain still works with RealVNC mode", "PASS" if "TLS:" in login and "connected to" in login else "FAIL")
+
+
 def t_fuzz():
     port = next(ports)
     with common.Server(port, "--view-only"):
@@ -183,7 +229,7 @@ def t_stall():
     record("stalled client does not delay the others", "PASS" if r.returncode == 0 else "FAIL", r.stdout.strip().splitlines()[0] if r.returncode == 0 and r.stdout.strip() else r.stdout[-400:])
 
 
-BASIC = [("unit", t_unit), ("decoders", t_decoders), ("concurrency", t_concurrency), ("ip", t_ip_binding), ("tls", t_tls), ("fuzz", t_fuzz), ("gui", t_gui), ("input", t_input)]
+BASIC = [("unit", t_unit), ("decoders", t_decoders), ("concurrency", t_concurrency), ("ip", t_ip_binding), ("tls", t_tls), ("vnc", t_vnc_auth), ("fuzz", t_fuzz), ("gui", t_gui), ("input", t_input)]
 ANIMATED = [("h264", t_h264), ("quality", t_quality), ("rtt", t_rtt), ("stall", t_stall)]
 
 
